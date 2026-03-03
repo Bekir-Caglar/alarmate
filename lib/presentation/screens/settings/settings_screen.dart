@@ -256,13 +256,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       vertical: 16,
                     ),
                     children: [
-                      _buildSettingsTitle('GENEL BİLGİLER', isDarkMode),
+                      _buildSettingsTitle('Genel Bilgiler', isDarkMode),
                       const SizedBox(height: 12),
                       if (!(FirebaseAuth.instance.currentUser?.isAnonymous ??
                           true)) ...[
                         _buildSettingsCard(
                           context: context,
-                          title: 'PROFİLİ DÜZENLE',
+                          title: 'Profili Düzenle',
                           icon: Icons.person_outline_rounded,
                           color: Colors.yellowAccent,
                           isDarkMode: isDarkMode,
@@ -271,20 +271,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                         const SizedBox(height: 12),
                       ],
-                      const SizedBox(height: 12),
                       _buildNotificationToggleCard(isDarkMode),
                       if (Platform.isAndroid && !_overlayEnabled) ...[
                         const SizedBox(height: 12),
                         _buildOverlayToggleCard(isDarkMode),
                       ],
                       const SizedBox(height: 24),
-                      _buildSettingsTitle('GÖRÜNÜM', isDarkMode),
+                      _buildSettingsTitle('Görünüm', isDarkMode),
                       const SizedBox(height: 12),
                       _buildThemeToggleCard(context, isDarkMode),
                       const SizedBox(height: 12),
                       _buildSettingsCard(
                         context: context,
-                        title: 'SAAT FORMATI',
+                        title: 'Saat Formatı',
                         icon: Icons.access_time_filled_rounded,
                         color: Colors.purpleAccent,
                         isDarkMode: isDarkMode,
@@ -294,7 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(height: 12),
                       _buildSettingsCard(
                         context: context,
-                        title: 'DİL SEÇİMİ',
+                        title: 'Dil Seçimi',
                         icon: Icons.language_rounded,
                         color: Colors.cyanAccent,
                         isDarkMode: isDarkMode,
@@ -302,22 +301,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _showLanguageBottomSheet(context, isDarkMode),
                       ),
                       const SizedBox(height: 24),
-                      _buildSettingsTitle('DESTEK', isDarkMode),
+                      _buildSettingsTitle('Destek', isDarkMode),
                       const SizedBox(height: 12),
                       _buildSettingsCard(
                         context: context,
-                        title: 'SÜRÜM BİLGİSİ',
+                        title: 'Uygulama Hakkında',
                         icon: Icons.info_outline_rounded,
                         color: Colors.orangeAccent,
                         isDarkMode: isDarkMode,
-                        onTap: () {},
+                        onTap: () => _showAboutBottomSheet(context, isDarkMode),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSettingsCard(
+                        context: context,
+                        title: 'Gizlilik ve Şartlar',
+                        icon: Icons.gavel_rounded,
+                        color: Colors.lightGreenAccent,
+                        isDarkMode: isDarkMode,
+                        onTap: () => _showLegalBottomSheet(context, isDarkMode),
                       ),
                       const SizedBox(height: 12),
                       _buildSettingsCard(
                         context: context,
                         title: _isLoggingOut
-                            ? 'ÇIKIŞ YAPILIYOR...'
-                            : 'ÇIKIŞ YAP',
+                            ? 'Çıkış yapılıyor...'
+                            : 'Çıkış Yap',
                         icon: _isLoggingOut
                             ? Icons.hourglass_empty_rounded
                             : Icons.logout_rounded,
@@ -360,6 +368,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 }
                               },
                       ),
+                      const SizedBox(height: 48),
                     ],
                   ),
                 ),
@@ -405,7 +414,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => Navigator.pop(context),
           ),
           Text(
-            'SİSTEM AYARLARI',
+            'Sistem Ayarları',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w900,
@@ -453,7 +462,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            height: 72,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
               color: cardBgColor,
               borderRadius: BorderRadius.circular(12),
@@ -468,11 +478,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     shape: BoxShape.circle,
                     border: Border.all(color: borderColor, width: 2),
                   ),
-                  child: Icon(
-                    icon,
-                    size: 20,
-                    color: isDestructive ? Colors.white : AppColors.textPrimary,
-                  ),
+                  child: Icon(icon, size: 20, color: Colors.black),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -527,7 +533,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
             color: cardBgColor,
             borderRadius: BorderRadius.circular(12),
@@ -545,30 +552,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: const Icon(
                   Icons.layers_rounded,
                   size: 20,
-                  color: Colors.white,
+                  color: Colors.black,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 16),
               const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'ÜSTTE GÖSTERME',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    Text(
-                      'ALARM DİĞER APPLERİN ÜSTÜNDE AÇILIR',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  'Üstte Gösterme (Android)',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
                 ),
               ),
               Switch(
@@ -606,7 +597,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
             color: cardBgColor,
             borderRadius: BorderRadius.circular(12),
@@ -624,15 +616,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: const Icon(
                   Icons.notifications_active_outlined,
                   size: 20,
-                  color: AppColors.textPrimary,
+                  color: Colors.black,
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
                   _notificationsEnabled
-                      ? 'BİLDİRİMLER: AÇIK'
-                      : 'BİLDİRİMLER: KAPALI',
+                      ? 'Bildirimler: Açık'
+                      : 'Bildirimler: Kapalı',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -680,7 +672,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
             color: cardBgColor,
             borderRadius: BorderRadius.circular(12),
@@ -700,13 +693,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ? Icons.dark_mode_rounded
                       : Icons.light_mode_rounded,
                   size: 20,
-                  color: Colors.white,
+                  color: Colors.black,
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
-                  isDarkMode ? 'GECE MODU: AÇIK' : 'GECE MODU: KAPALI',
+                  'Karanlik Tema',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -776,7 +769,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 24),
                     Text(
-                      'SAAT FORMATI',
+                      'Saat Formatı',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 24,
@@ -788,7 +781,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: 24),
                     _buildSelectionOption(
                       context: context,
-                      title: '24 SAAT FORMATI',
+                      title: '24 Saat Formatı',
                       isSelected: use24h,
                       isDarkMode: isDarkMode,
                       onTap: () {
@@ -799,7 +792,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: 16),
                     _buildSelectionOption(
                       context: context,
-                      title: '12 SAAT FORMATI (AM/PM)',
+                      title: '12 Saat Formatı (AM/PM)',
                       isSelected: !use24h,
                       isDarkMode: isDarkMode,
                       onTap: () {
@@ -904,7 +897,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'DİL SEÇİMİ',
+                  'Dil Seçimi',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 24,
@@ -916,7 +909,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 24),
                 _buildLanguageOption(
                   context: context,
-                  title: 'TÜRKÇE',
+                  title: 'Türkçe',
                   isSelected: true,
                   isDarkMode: isDarkMode,
                   onTap: () => Navigator.pop(context),
@@ -924,7 +917,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 16),
                 _buildLanguageOption(
                   context: context,
-                  title: 'ENGLISH (YAKINDA)',
+                  title: 'English (Yakında)',
                   isSelected: false,
                   isDarkMode: isDarkMode,
                   onTap: () {},
@@ -934,6 +927,135 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       },
+    );
+  }
+
+  void _showAboutBottomSheet(BuildContext context, bool isDarkMode) {
+    final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
+    final bgColor = isDarkMode ? AppColors.surfaceDark : Colors.white;
+    final titleColor = isDarkMode
+        ? AppColors.textDarkPrimary
+        : AppColors.textPrimary;
+    final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border.all(color: borderColor, width: 3),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(horizontal: 100),
+                  decoration: BoxDecoration(
+                    color: shadowColor.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Alarmate Hakkında',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: titleColor,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDarkMode
+                        ? AppColors.surfaceDark
+                        : Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: borderColor, width: 2),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Versiyon 1.0.0',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Alarmate, arkadaşlarınla veya tek başına daha eğlenceli bir şekilde uyanmanı sağlayan modern bir alarm uygulamasıdır.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: titleColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                _buildAboutRow(
+                  Icons.code_rounded,
+                  'Developed by Bekircaglar',
+                  isDarkMode,
+                ),
+                const SizedBox(height: 12),
+                _buildAboutRow(
+                  Icons.favorite_rounded,
+                  'Made with Flutter',
+                  isDarkMode,
+                  iconColor: Colors.red,
+                ),
+                const SizedBox(height: 24),
+                PrimaryButton(
+                  text: 'Tamam',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAboutRow(
+    IconData icon,
+    String text,
+    bool isDarkMode, {
+    Color? iconColor,
+  }) {
+    final titleColor = isDarkMode
+        ? AppColors.textDarkPrimary
+        : AppColors.textPrimary;
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: iconColor ?? titleColor),
+        const SizedBox(width: 12),
+        Text(
+          text,
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            fontSize: 12,
+            color: titleColor,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1020,19 +1142,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: shadowColor.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+                  Container(
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(horizontal: 100),
+                    decoration: BoxDecoration(
+                      color: shadowColor.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'PROFİLİ DÜZENLE',
+                    'Profili Düzenle',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 24,
@@ -1088,13 +1208,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 32),
                   _buildEditField(
-                    label: 'TAKMA AD',
+                    label: 'Takma Ad',
                     controller: _nicknameController,
                     isDarkMode: isDarkMode,
                   ),
                   const SizedBox(height: 32),
                   PrimaryButton(
-                    text: 'GÜNCELLE',
+                    text: 'Güncelle',
                     onPressed: () async {
                       final user = FirebaseAuth.instance.currentUser;
                       if (user == null) return;
@@ -1104,7 +1224,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       if (newUsername.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('KULLANICI ADI BOŞ OLAMAZ!'),
+                            content: Text('Kullanıcı adı boş olamaz!'),
                           ),
                         );
                         return;
@@ -1127,7 +1247,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
-                                'BU KULLANICI ADI ZATEN ALINMIŞ!',
+                                'Bu kullanıcı adı zaten alınmış!',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w900,
                                   color: Colors.white,
@@ -1148,7 +1268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       if (!context.mounted) return;
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('PROFİL GÜNCELLENDİ!')),
+                        const SnackBar(content: Text('Profil güncellendi!')),
                       );
                     },
                   ),
@@ -1208,6 +1328,126 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  void _showLegalBottomSheet(BuildContext context, bool isDarkMode) {
+    final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
+    final bgColor = isDarkMode ? AppColors.surfaceDark : Colors.white;
+    final titleColor = isDarkMode
+        ? AppColors.textDarkPrimary
+        : AppColors.textPrimary;
+    final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return DefaultTabController(
+          length: 2,
+          child: Container(
+            height: MediaQuery.of(context).size.height * 0.7,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+              border: Border.all(color: borderColor, width: 3),
+            ),
+            child: SafeArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(horizontal: 120),
+                    decoration: BoxDecoration(
+                      color: shadowColor.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Gizlilik ve Şartlar',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      color: titleColor,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TabBar(
+                    indicatorColor: AppColors.primary,
+                    labelColor: AppColors.primary,
+                    unselectedLabelColor: Colors.grey,
+                    labelStyle: const TextStyle(fontWeight: FontWeight.w900),
+                    tabs: const [
+                      Tab(text: 'Gizlilik'),
+                      Tab(text: 'Kullanım'),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        _buildLegalContent(
+                          'Gizlilik Politikası',
+                          'Kişisel verileriniz bizim için değerlidir. Alarmate uygulaması, verilerinizi sadece size daha iyi bir deneyim sunmak için kullanır ve üçüncü şahıslarla paylaşmaz.',
+                          isDarkMode,
+                        ),
+                        _buildLegalContent(
+                          'Kullanım Şartları',
+                          'Bu uygulamayı kullanarak tüm şartları kabul etmiş sayılırsınız. Alarmate, sunulan hizmetlerin kesintisiz olacağını garanti etmez ancak en iyi deneyimi sunmak için çalışır.',
+                          isDarkMode,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  PrimaryButton(
+                    text: 'Tamam',
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLegalContent(String title, String content, bool isDarkMode) {
+    final titleColor = isDarkMode
+        ? AppColors.textDarkPrimary
+        : AppColors.textPrimary;
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              color: titleColor,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            content,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: titleColor.withValues(alpha: 0.8),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

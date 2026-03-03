@@ -4,6 +4,7 @@ import '../../components/primary_button.dart';
 import '../../components/retro_progress_bar.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../../main.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -71,7 +72,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (_currentIndex == 3) {
       if (!_notificationPermissionRequested) {
         // First click: Request Permission
+
+        // FCM permission request
+        await FirebaseMessaging.instance.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+
+        // Local notification and other permissions via permission_handler
         final status = await Permission.notification.request();
+
+        // Android specific: Request exact alarm permission if needed
+        if (await Permission.scheduleExactAlarm.isDenied) {
+          await Permission.scheduleExactAlarm.request();
+        }
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('notifications_enabled', status.isGranted);
         setState(() {

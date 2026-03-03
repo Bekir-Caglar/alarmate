@@ -117,21 +117,31 @@ class DataRepository {
       event,
     ) async {
       if (event.snapshot.exists && event.snapshot.value is Map) {
-        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+        try {
+          final data = Map<String, dynamic>.from(event.snapshot.value as Map);
 
-        // Data map şeklindedir: { alarmId: { groupName: ... } }
-        // Hepsini birden LocalDb'ye atıyoruz, LocalDb stream atarak anında UI günceller.
-        await _localDb.saveAll(
-          'invitations',
-          data.cast<String, Map<String, dynamic>>(),
-        );
+          // Data map şeklindedir: { alarmId: { groupName: ... } }
+          final Map<String, Map<String, dynamic>> formatted = {};
+          data.forEach((key, value) {
+            if (value is Map) {
+              formatted[key.toString()] = Map<String, dynamic>.from(value);
+            }
+          });
 
-        // Eğer sunucuda silinen davetler varsa, yerelden de silelim
-        final localInvs = await _localDb.getAll('invitations');
-        final localIds = localInvs.map((e) => e['id'] as String).toList();
-        final toDelete = localIds.where((id) => !data.containsKey(id)).toList();
-        if (toDelete.isNotEmpty)
-          await _localDb.deleteMany('invitations', toDelete);
+          await _localDb.saveAll('invitations', formatted);
+
+          // Eğer sunucuda silinen davetler varsa, yerelden de silelim
+          final localInvs = await _localDb.getAll('invitations');
+          final localIds = localInvs.map((e) => e['id'] as String).toList();
+          final toDelete = localIds
+              .where((id) => !data.containsKey(id))
+              .toList();
+          if (toDelete.isNotEmpty) {
+            await _localDb.deleteMany('invitations', toDelete);
+          }
+        } catch (e) {
+          debugPrint('Invitations sync error: $e');
+        }
       } else {
         // Davetler boş ise tabloyu temizle
         _localDb.clearTable('invitations');

@@ -139,7 +139,8 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
     if (phone.isEmpty) return;
 
     // Google style prefixing (+90) if not present
-    String searchPhone = phone.startsWith('+') ? phone : '+90$phone';
+    String rawPhone = phone.replaceAll(RegExp(r'\s+'), '');
+    String searchPhone = rawPhone.startsWith('+') ? rawPhone : '+90$rawPhone';
 
     setState(() => _isSearching = true);
 
@@ -230,6 +231,9 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
       // Alarmlar node'una ekle (await YOK, offline first için asenkron çalışır)
       newAlarmRef.set(alarmData);
 
+      // Yerel önbelleğe anında kaydet
+      await LocalDb.instance.save('alarms', alarmId, alarmData);
+
       // Kendi membership'ine ekle (await YOK)
       db.child('memberships').child(uid).child(alarmId).set(true);
 
@@ -307,32 +311,48 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
                 _StatusBarCover(color: statusBarColor),
                 _buildAppBar(context, isDarkMode),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24.0,
-                      vertical: 24.0,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildRetroProgressBar(isDarkMode),
-                        const Spacer(),
-                        SlideTransition(
-                          position: _slideAnimation,
-                          child: _buildCurrentStepView(isDarkMode),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        clipBehavior: Clip.none,
+                        physics: const BouncingScrollPhysics(),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight,
+                          ),
+                          child: IntrinsicHeight(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0,
+                                vertical: 24.0,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _buildRetroProgressBar(isDarkMode),
+                                  const Spacer(),
+                                  SlideTransition(
+                                    position: _slideAnimation,
+                                    child: _buildCurrentStepView(isDarkMode),
+                                  ),
+                                  const Spacer(),
+                                  const SizedBox(height: 24),
+                                  PrimaryButton(
+                                    text:
+                                        (_isAnonymous
+                                            ? _currentIndex == 3
+                                            : _currentIndex == 4)
+                                        ? 'BİTİR VE OLUŞTUR!'
+                                        : 'SIRADAKİ ->',
+                                    onPressed: _nextStep,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                        const Spacer(),
-                        PrimaryButton(
-                          text:
-                              (_isAnonymous
-                                  ? _currentIndex == 3
-                                  : _currentIndex == 4)
-                              ? 'BİTİR VE OLUŞTUR!'
-                              : 'SIRADAKİ ->',
-                          onPressed: _nextStep,
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                 ),
               ],

@@ -60,6 +60,8 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
   FixedExtentScrollController? _minuteController;
   FixedExtentScrollController? _amPmController;
   Timer? _debounceTimer;
+  final TextEditingController _memberPhoneController = TextEditingController();
+  bool _isSearchingMember = false;
 
   @override
   void initState() {
@@ -172,6 +174,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     _hourController?.dispose();
     _minuteController?.dispose();
     _amPmController?.dispose();
+    _memberPhoneController.dispose();
     super.dispose();
   }
 
@@ -384,63 +387,449 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     // Listener will handle popping the screen when membership is removed
   }
 
+  Future<void> _removeMember(String memberUid, String username) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+        final titleColor = isDarkMode
+            ? AppColors.textDarkPrimary
+            : AppColors.textPrimary;
+        final bgColor = isDarkMode ? AppColors.surfaceDark : Colors.white;
+        final borderColor = isDarkMode
+            ? AppColors.borderDark
+            : AppColors.border;
+        final shadowColor = isDarkMode
+            ? AppColors.shadowDark
+            : AppColors.shadow;
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: borderColor, width: 3),
+              boxShadow: [
+                BoxShadow(color: shadowColor, offset: const Offset(6, 6)),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.person_remove_rounded,
+                  color: AppColors.error,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Üyeyi Çıkar',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: titleColor,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '$username isimli kullanıcıyı gruptan çıkarmak istediğine emin misin?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: titleColor.withOpacity(0.7),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context, false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: borderColor, width: 2),
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Vazgeç',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: titleColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context, true),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: borderColor, width: 2),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'Çıkar',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final db = FirebaseDatabase.instance.ref();
+      // Remove from members
+      await db
+          .child('alarms')
+          .child(widget.alarmId)
+          .child('members')
+          .child(memberUid)
+          .remove();
+      // Remove from invitedMembers
+      await db
+          .child('alarms')
+          .child(widget.alarmId)
+          .child('invitedMembers')
+          .child(memberUid)
+          .remove();
+      // Remove membership record
+      await db
+          .child('memberships')
+          .child(memberUid)
+          .child(widget.alarmId)
+          .remove();
+      // Remove invitation record
+      await db
+          .child('invitations')
+          .child(memberUid)
+          .child(widget.alarmId)
+          .remove();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$username gruptan çıkarıldı.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('İşlem sırasında bir hata oluştu.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _searchUserByPhone(StateSetter setModalState) async {
+    String phone = _memberPhoneController.text.trim().replaceAll(
+      RegExp(r'\s+'),
+      '',
+    );
+    if (phone.isEmpty) return;
+
+    String searchPhone = phone.startsWith('+') ? phone : '+90$phone';
+
+    setModalState(() => _isSearchingMember = true);
+
+    try {
+      final db = FirebaseDatabase.instance.ref();
+      final snapshot = await db
+          .child('users')
+          .orderByChild('phone')
+          .equalTo(searchPhone)
+          .once();
+
+      if (snapshot.snapshot.exists) {
+        final userData = (snapshot.snapshot.value as Map).entries.first;
+        final invitedUid = userData.key;
+        final info = Map<String, dynamic>.from(userData.value as Map);
+        final username = info['username'] ?? 'BİLİNMEYEN';
+
+        // Check if already a member or already invited
+        bool alreadyIn = _members.any((m) => m['uid'] == invitedUid);
+
+        if (alreadyIn) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('BU KULLANICI ZATEN GRUPTA VEYA DAVET EDİLMİŞ!'),
+              ),
+            );
+          }
+        } else {
+          // Send Invitation
+          String inviterName = 'BİR ARKADAŞIN';
+          final currentUserData = await DataRepository.instance.getUserOnce(
+            _activeUid!,
+          );
+          if (currentUserData != null && currentUserData['username'] != null) {
+            inviterName = currentUserData['username'];
+          }
+
+          final inviteData = {
+            'groupName': _groupName,
+            'inviterName': inviterName,
+            'time': _currentTime,
+            'ampm': _currentAmPm,
+            'mission': _currentMission,
+            'difficulty': _currentDifficulty,
+            'days': _selectedDays,
+            'timestamp': ServerValue.timestamp,
+          };
+
+          // 1. Send invite to user's invitations node
+          await db
+              .child('invitations')
+              .child(invitedUid)
+              .child(widget.alarmId)
+              .set(inviteData);
+
+          // 2. Add to alarm's invitedMembers list
+          await db
+              .child('alarms')
+              .child(widget.alarmId)
+              .child('invitedMembers')
+              .child(invitedUid)
+              .set(username);
+
+          _memberPhoneController.clear();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('DAVET GÖNDERİLDİ!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            Navigator.pop(
+              context,
+            ); // Close bottom sheet after successful invite
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('KULLANICI BULUNAMADI!')),
+          );
+        }
+      }
+    } finally {
+      if (mounted) setModalState(() => _isSearchingMember = false);
+    }
+  }
+
+  Future<bool> _showExitConfirmation() async {
+    if (!_isModified) return true;
+
+    final bool? result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+        final titleColor = isDarkMode
+            ? AppColors.textDarkPrimary
+            : AppColors.textPrimary;
+        final bgColor = isDarkMode ? AppColors.surfaceDark : Colors.white;
+        final borderColor = isDarkMode
+            ? AppColors.borderDark
+            : AppColors.border;
+        final shadowColor = isDarkMode
+            ? AppColors.shadowDark
+            : AppColors.shadow;
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: borderColor, width: 3),
+              boxShadow: [
+                BoxShadow(color: shadowColor, offset: const Offset(6, 6)),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.orange,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Değişiklikleri Kaydetme',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: titleColor,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Yaptığın değişiklikler kaydedilmedi. Çıkmak istediğine emin misin?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: titleColor.withOpacity(0.7),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context, false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: borderColor, width: 2),
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Vazgeç',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: titleColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context, true),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: borderColor, width: 2),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'Çık',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    return result ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final statusBarColor = isDarkMode ? AppColors.surfaceDark : Colors.white;
 
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _DetailGridBackgroundPainter(
-                      color: isDarkMode
-                          ? Colors.white.withOpacity(0.05)
-                          : AppColors.textPrimary.withOpacity(0.05),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final shouldPop = await _showExitConfirmation();
+        if (shouldPop && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Stack(
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _DetailGridBackgroundPainter(
+                        color: isDarkMode
+                            ? Colors.white.withOpacity(0.05)
+                            : AppColors.textPrimary.withOpacity(0.05),
+                      ),
                     ),
                   ),
-                ),
-                SafeArea(
-                  top: false,
-                  bottom: false,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _StatusBarCover(color: statusBarColor),
-                      _buildAppBar(context, isDarkMode),
-                      Expanded(
-                        child: ListView(
-                          padding: const EdgeInsets.all(24),
-                          children: [
-                            if (_hasPendingUpdate && !_isAdmin) ...[
-                              _buildPendingUpdateBanner(isDarkMode),
-                              const SizedBox(height: 24),
-                            ],
-                            _buildTimeHeader(context, isDarkMode),
-                            const SizedBox(height: 32),
-                            _buildMissionSection(isDarkMode),
-                            const SizedBox(height: 32),
-                            _buildDaysSection(isDarkMode),
-                            if (!_isAnonymous) ...[
+                  SafeArea(
+                    top: false,
+                    bottom: false,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _StatusBarCover(color: statusBarColor),
+                        _buildAppBar(context, isDarkMode),
+                        Expanded(
+                          child: ListView(
+                            padding: const EdgeInsets.all(24),
+                            children: [
+                              if (_hasPendingUpdate && !_isAdmin) ...[
+                                _buildPendingUpdateBanner(isDarkMode),
+                                const SizedBox(height: 24),
+                              ],
+                              _buildTimeHeader(context, isDarkMode),
                               const SizedBox(height: 32),
-                              _buildTeamSection(isDarkMode),
+                              _buildMissionSection(isDarkMode),
+                              const SizedBox(height: 32),
+                              _buildDaysSection(isDarkMode),
+                              if (!_isAnonymous) ...[
+                                const SizedBox(height: 32),
+                                _buildTeamSection(isDarkMode),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: _buildLeaveButton(context, isDarkMode),
-                      ),
-                    ],
+                        Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: _buildLeaveButton(context, isDarkMode),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -460,7 +849,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         children: [
           BrutalistIconButton(
             icon: Icons.arrow_back_rounded,
-            onTap: () => Navigator.pop(context),
+            onTap: () => Navigator.maybePop(context),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -548,7 +937,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'ODA AYARLARI',
+                  'Oda Ayarları',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 24,
@@ -560,7 +949,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                 const SizedBox(height: 24),
                 if (_isAdmin) ...[
                   _buildBottomSheetButton(
-                    title: 'ODAYI KAPAT',
+                    title: 'Odayı Kapat',
                     icon: Icons.close_rounded,
                     color: AppColors.error,
                     textColor: Colors.white,
@@ -835,7 +1224,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'TEKRAR GÜNLERİ',
+          _selectedDays.isEmpty ? 'Tek Seferlik Alarm' : 'Tekrar Günleri',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w900,
@@ -930,7 +1319,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'UYANMA GÖREVİ',
+          'Uyanma Görevi',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w900,
@@ -1041,7 +1430,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'EKİP DURUMU',
+              'Ekip Durumu',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
@@ -1096,6 +1485,10 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                       isAdminRow:
                           member['uid'] == _activeUid, // Simplify for UI
                       status: member['status'],
+                      onKick: (_isAdmin && !member['isMe'])
+                          ? () =>
+                                _removeMember(member['uid'], member['username'])
+                          : null,
                     ),
                     if (member != _members.last)
                       Divider(color: shadowColor, thickness: 3, height: 32),
@@ -1325,7 +1718,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'YENİ ÜYE EKLE',
+                    'Yeni Üye Ekle',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 24,
@@ -1335,9 +1728,89 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  PrimaryButton(
-                    text: 'DAVET BAĞLANTISI KOPYALA',
-                    onPressed: () => Navigator.pop(context),
+                  StatefulBuilder(
+                    builder: (context, setModalState) {
+                      return Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: isDarkMode
+                                        ? AppColors.surfaceDark
+                                        : Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: borderColor,
+                                      width: 3,
+                                    ),
+                                  ),
+                                  child: TextField(
+                                    controller: _memberPhoneController,
+                                    keyboardType: TextInputType.phone,
+                                    style: TextStyle(
+                                      height: 1.0,
+                                      color: isDarkMode
+                                          ? Colors.white
+                                          : Colors.black,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      hintText: '5XX XXX XX XX',
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: _isSearchingMember
+                                    ? null
+                                    : () => _searchUserByPhone(setModalState),
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: borderColor,
+                                      width: 3,
+                                    ),
+                                  ),
+                                  child: _isSearchingMember
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.person_add_rounded,
+                                          color: Colors.white,
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          const Opacity(
+                            opacity: 0.6,
+                            child: Text(
+                              'Arkadaşını telefon numarasıyla ara ve davet et.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),
@@ -1354,6 +1827,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     bool isDarkMode, {
     bool isAdminRow = false,
     String status = 'JOINED',
+    VoidCallback? onKick,
   }) {
     final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
     final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
@@ -1361,56 +1835,62 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         ? AppColors.textDarkPrimary
         : AppColors.textPrimary;
 
-    return Row(
-      children: [
-        Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: status == 'PENDING'
-                ? Colors.grey
-                : (isAwake ? Colors.greenAccent : AppColors.error),
-            shape: BoxShape.circle,
-            border: Border.all(color: borderColor, width: 2),
-            boxShadow: [
-              BoxShadow(color: shadowColor, offset: const Offset(2, 2)),
-            ],
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Row(
-            children: [
-              Text(
-                name,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  color: titleColor,
-                ),
-              ),
-              if (isAdminRow) ...[
-                const SizedBox(width: 8),
-                const Icon(
-                  Icons.workspace_premium_rounded,
-                  color: Colors.orange,
-                  size: 20,
-                ),
+    return GestureDetector(
+      onTap: onKick,
+      behavior: HitTestBehavior.opaque,
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: status == 'PENDING'
+                  ? Colors.grey
+                  : (isAwake ? Colors.greenAccent : AppColors.error),
+              shape: BoxShape.circle,
+              border: Border.all(color: borderColor, width: 2),
+              boxShadow: [
+                BoxShadow(color: shadowColor, offset: const Offset(2, 2)),
               ],
-            ],
+            ),
           ),
-        ),
-        Text(
-          status == 'PENDING' ? 'BEKLENİYOR' : (isAwake ? 'AYAKTA' : 'UYUYOR'),
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w900,
-            color: status == 'PENDING'
-                ? Colors.grey
-                : (isAwake ? Colors.green : AppColors.error),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Row(
+              children: [
+                Text(
+                  name,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: titleColor,
+                  ),
+                ),
+                if (isAdminRow) ...[
+                  const SizedBox(width: 8),
+                  const Icon(
+                    Icons.workspace_premium_rounded,
+                    color: Colors.orange,
+                    size: 20,
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
-      ],
+          Text(
+            status == 'PENDING'
+                ? 'Bekleniyor'
+                : (isAwake ? 'Ayakta' : 'Uyuyor'),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+              color: status == 'PENDING'
+                  ? Colors.grey
+                  : (isAwake ? Colors.green : AppColors.error),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1418,7 +1898,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     if (_isAdmin)
       return const SizedBox.shrink(); // Admin cannot leave, must close the room
     return PrimaryButton(
-      text: 'GRUPTAN ÇIK',
+      text: 'Gruptan Çık',
       color: AppColors.error,
       onPressed: _leaveGroup,
     );

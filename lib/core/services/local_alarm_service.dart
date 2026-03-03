@@ -29,7 +29,7 @@ class LocalAlarmService {
   static Future<List<Map<String, dynamic>>> getAlarms() async {
     await migrateOldAlarms();
     final all = await LocalDb.instance.getAll('alarms');
-    return all.where((e) => (e['id'] as String).startsWith('local_')).toList();
+    return all;
   }
 
   static Future<void> updateAlarm(

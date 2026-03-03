@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
+import '../database/local_db.dart';
 import 'local_alarm_service.dart';
 
 class AlarmSyncService {
@@ -45,16 +46,26 @@ class AlarmSyncService {
     }
   }
 
-  static Future<void> syncAlarmsWithDevice() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      await Alarm.stopAll();
-      return;
+  static int calculateLocalId(String timeStr, String ampm) {
+    // String.hashCode is NOT stable across app restarts/runs in Dart/Flutter.
+    // We implement a simple stable rolling hash for HH:mmAM/PM strings.
+    final s = (timeStr.trim() + ampm.trim()).toUpperCase();
+    int hash = 0;
+    for (int i = 0; i < s.length; i++) {
+      hash = (31 * hash + s.codeUnitAt(i)) & 0x7FFFFFFF;
     }
+    // Return a 31-bit positive integer for hardware alarm ID compatibility.
+    return hash;
+  }
+
+  static Future<void> syncAlarmsWithDevice({int? dismissedAlarmId}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final bool isGuest = user == null || user.isAnonymous;
 
     List<Map<String, dynamic>> alarmsList = [];
 
-    if (user.isAnonymous) {
+    if (isGuest) {
+      // Hem Firebase Anonim hem de "Misafir Mod" (Offline Guest) için yerel DB kullanıyoruz.
       alarmsList = await LocalAlarmService.getAlarms();
     } else {
       try {
@@ -75,24 +86,49 @@ class AlarmSyncService {
                 .timeout(const Duration(seconds: 3));
             if (alarmSnap.exists) {
               final data = Map<String, dynamic>.from(alarmSnap.value as Map);
-              data['id'] = id;
+              data['id'] = id.toString();
               alarmsList.add(data);
             }
           }
         }
       } catch (e) {
-        // If offline, use local database alarms for device sync
-        alarmsList = await LocalAlarmService.getAlarms();
+        // Online değilse veya hata aldıysa yerel cache'i kullan
+        alarmsList = await LocalDb.instance.getAll('alarms');
       }
     }
 
     // Get IDs of alarms that SHOULD be on the device
     final List<int> activeIds = [];
     for (var alarm in alarmsList) {
+      final timeStr = alarm['time'] as String;
+      final ampm = alarm['ampm'] as String;
+      final int localId = calculateLocalId(timeStr, ampm);
+
+      // Handle one-time alarm deactivation
+      if (dismissedAlarmId != null && localId == dismissedAlarmId) {
+        final days = (alarm['days'] as List?) ?? [];
+        if (days.isEmpty && alarm['isActive'] == true) {
+          debugPrint('Deactivating one-time alarm: ${alarm['id']}');
+
+          // Yerel veritabanında kapat
+          await LocalAlarmService.updateAlarm(alarm['id'], {'isActive': false});
+
+          // Eğer Firebase kullanıcısı (Anonim olmayan) ise bulutta da kapat
+          if (user != null && !user.isAnonymous) {
+            await FirebaseDatabase.instance
+                .ref()
+                .child('alarms')
+                .child(alarm['id'])
+                .child('isActive')
+                .set(false);
+          }
+
+          alarm['isActive'] =
+              false; // Bu senkronizasyon döngüsü için yerel kopyayı güncelle
+        }
+      }
+
       if (alarm['isActive'] == true) {
-        final timeStr = alarm['time'] as String;
-        final ampm = alarm['ampm'] as String;
-        final int localId = timeStr.hashCode.abs() ^ ampm.hashCode;
         activeIds.add(localId);
       }
     }
@@ -115,7 +151,7 @@ class AlarmSyncService {
       if (alarm['isActive'] == true) {
         final timeStr = alarm['time'] as String;
         final ampm = alarm['ampm'] as String;
-        final int localId = timeStr.hashCode.abs() ^ ampm.hashCode;
+        final int localId = calculateLocalId(timeStr, ampm);
 
         // CRITICAL: If this alarm is ALREADY ringing, DON'T call Alarm.set again!
         // Calling Alarm.set on a ringing alarm stops the audio for that alarm.
@@ -143,13 +179,25 @@ class AlarmSyncService {
     final days =
         (alarm['days'] as List?)?.map((e) => (e as num).toInt()).toList() ?? [];
 
+    final timeStrClean = timeStr.trim();
+    final ampmClean = ampm.trim();
+
     DateTime now = DateTime.now();
     DateTime alarmTime;
 
     if (days.isEmpty) {
       alarmTime = DateTime(now.year, now.month, now.day, hour, min);
+
+      // If the scheduled time is in the past (even by seconds),
+      // check if it's the same minute as now.
       if (alarmTime.isBefore(now)) {
-        alarmTime = alarmTime.add(const Duration(days: 1));
+        if (alarmTime.hour == now.hour && alarmTime.minute == now.minute) {
+          // It's the current minute. Schedule for 5 seconds from now to be safe.
+          alarmTime = now.add(const Duration(seconds: 5));
+        } else {
+          // It's definitely in the past, move to tomorrow.
+          alarmTime = alarmTime.add(const Duration(days: 1));
+        }
       }
     } else {
       // Find the next occurrence among selected days
@@ -173,7 +221,7 @@ class AlarmSyncService {
       }
     }
 
-    final int localId = timeStr.hashCode.abs() ^ ampm.hashCode;
+    final int localId = calculateLocalId(timeStrClean, ampmClean);
 
     final alarmSettings = AlarmSettings(
       id: localId,

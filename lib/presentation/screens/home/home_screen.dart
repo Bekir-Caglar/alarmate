@@ -14,6 +14,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../../../core/services/alarm_sync_service.dart';
 import '../../../core/services/local_alarm_service.dart';
+import '../../../core/database/local_db.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import '../../../main.dart';
@@ -508,6 +509,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                             isActive: alarm['isActive'] ?? true,
                                             isDarkMode: isDarkMode,
                                             isAnonymous: _isAnonymous,
+                                            days: List<int>.from(
+                                              alarm['days'] ?? [],
+                                            ),
                                             onToggle: () async {
                                               final bool newActive =
                                                   !(alarm['isActive'] ?? true);
@@ -516,7 +520,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   alarm['id'],
                                                   {'isActive': newActive},
                                                 );
-                                                await _loadLocalAlarms();
                                               } else {
                                                 // Update UI locally first for instant feedback
                                                 setState(() {
@@ -531,6 +534,24 @@ class _HomeScreenState extends State<HomeScreen> {
                                                         newActive;
                                                   }
                                                 });
+
+                                                // Update local cache immediately for offline reliability
+                                                final current = await LocalDb
+                                                    .instance
+                                                    .getById(
+                                                      'alarms',
+                                                      alarm['id'],
+                                                    );
+                                                if (current != null) {
+                                                  await LocalDb.instance.save(
+                                                    'alarms',
+                                                    alarm['id'],
+                                                    {
+                                                      ...current,
+                                                      'isActive': newActive,
+                                                    },
+                                                  );
+                                                }
 
                                                 await FirebaseDatabase.instance
                                                     .ref()
@@ -1313,6 +1334,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool isActive,
     required bool isDarkMode,
     required bool isAnonymous,
+    required List<int> days,
     required VoidCallback onToggle,
   }) {
     final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
@@ -1327,8 +1349,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // In dark mode, an inactive card should be slightly darker than the surface
     final activeCardBg = isDarkMode ? AppColors.surfaceDark : Colors.white;
     final inactiveCardBg = isDarkMode
-        ? const Color(0xFF161E2E)
-        : Colors.grey[200];
+        ? const Color(0xFF111721)
+        : const Color(0xFFE0E0E0);
 
     return GestureDetector(
       onTap: () {
@@ -1366,10 +1388,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           // Main Card
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(16), // Reduced from 24
             decoration: BoxDecoration(
               color: isActive ? activeCardBg : inactiveCardBg,
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(color: borderColor, width: 3),
             ),
             child: Column(
@@ -1377,7 +1399,6 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ValueListenableBuilder<bool>(
                       valueListenable: timeFormatNotifier,
@@ -1401,7 +1422,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Text(
                               displayTime,
                               style: GoogleFonts.jersey10(
-                                fontSize: 64,
+                                fontSize: 44, // Reduced from 64
                                 fontWeight: FontWeight.w400,
                                 color: titleColor,
                                 height: 1.0,
@@ -1410,11 +1431,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (displayAmPm != null) ...[
                               const SizedBox(width: 4),
                               Padding(
-                                padding: const EdgeInsets.only(bottom: 12.0),
+                                padding: const EdgeInsets.only(bottom: 6.0),
                                 child: Text(
                                   displayAmPm,
                                   style: TextStyle(
-                                    fontSize: 16,
+                                    fontSize: 14,
                                     fontWeight: FontWeight.w900,
                                     color: titleColor,
                                   ),
@@ -1429,16 +1450,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     GestureDetector(
                       onTap: onToggle,
                       child: Container(
-                        width: 56,
-                        height: 32,
+                        width: 48, // Reduced from 56
+                        height: 28, // Reduced from 32
                         decoration: BoxDecoration(
                           color: isActive
                               ? AppColors.primary
                               : (isDarkMode
                                     ? AppColors.surfaceDark
                                     : Colors.white),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: borderColor, width: 3),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: borderColor, width: 2),
                           boxShadow: [
                             BoxShadow(
                               color: shadowColor,
@@ -1451,8 +1472,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             : Alignment.centerLeft,
                         padding: const EdgeInsets.all(2),
                         child: Container(
-                          width: 22,
-                          height: 22,
+                          width: 20,
+                          height: 20,
                           decoration: BoxDecoration(
                             color: isActive ? Colors.white : shadowColor,
                             shape: BoxShape.circle,
@@ -1463,52 +1484,133 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: borderColor, width: 3),
-                    boxShadow: [
-                      BoxShadow(color: shadowColor, offset: const Offset(2, 2)),
-                    ],
-                  ),
-                  child: Text(
-                    groupName,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      color: AppColors
-                          .textPrimary, // Always dark for contrast on accent colors
-                      letterSpacing: 1.5,
+                const SizedBox(height: 12), // Reduced from 20
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: borderColor, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: shadowColor,
+                            offset: const Offset(1, 1),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        groupName,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.textPrimary,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                if (!isAnonymous) ...[
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
+                    if (!isAnonymous) ...[
+                      const SizedBox(width: 12),
                       Icon(
                         Icons.people_alt_rounded,
-                        size: 20,
+                        size: 16,
                         color: subTitleColor,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 4),
                       Text(
-                        '$membersAwake / $totalMembers UYANDI',
+                        '$membersAwake / $totalMembers',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.w900,
                           color: subTitleColor,
                         ),
                       ),
                     ],
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // Days row
+                // Days row or One-time label
+                if (days.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isDarkMode
+                          ? AppColors.primary.withOpacity(0.1)
+                          : AppColors.primaryLight.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: AppColors.primary.withOpacity(0.5),
+                        width: 2,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'TEK SEFERLİK ALARM',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          color: isDarkMode ? Colors.white : AppColors.primary,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: List.generate(7, (index) {
+                      final dayNamesArr = [
+                        'Pt',
+                        'Sa',
+                        'Ça',
+                        'Pe',
+                        'Cu',
+                        'Ct',
+                        'Pz',
+                      ];
+                      final dayIndex = index + 1;
+                      final isHighlighted = days.contains(dayIndex);
+
+                      return Container(
+                        width: 36, // Slightly wider for 2 letters
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: isHighlighted
+                              ? AppColors.primary.withOpacity(
+                                  isDarkMode ? 0.3 : 0.1,
+                                )
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: isHighlighted
+                                ? AppColors.primary
+                                : borderColor.withOpacity(0.3),
+                            width: 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            dayNamesArr[index],
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              color: isHighlighted
+                                  ? (isDarkMode
+                                        ? Colors.white
+                                        : AppColors.primary)
+                                  : titleColor.withOpacity(0.3),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
                   ),
-                ],
               ],
             ),
           ),

@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import '../../../main.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
@@ -47,13 +48,11 @@ class _InvitationScreenState extends State<InvitationScreen> {
     try {
       final db = FirebaseDatabase.instance.ref();
 
-      // 1. Alarma kendini ekle
-      await db
-          .child('alarms')
-          .child(widget.alarmId)
-          .child('members')
-          .child(user.uid)
-          .set(true);
+      // 1. Alarma kendini ekle ve alarmı aktif yap
+      await db.child('alarms').child(widget.alarmId).update({
+        'members/${user.uid}': true,
+        'isActive': true,
+      });
 
       // 1b. Davet listesinden sil (alarm altındaki)
       await db
@@ -289,62 +288,137 @@ class _InvitationScreenState extends State<InvitationScreen> {
                                   ),
                                   child: Column(
                                     children: [
-                                      Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.end,
-                                        children: [
-                                          Text(
-                                            widget.time,
-                                            style: GoogleFonts.jersey10(
-                                              fontSize: 64,
-                                              fontWeight: FontWeight.w400,
-                                              color: titleColor,
-                                              height: 1.0,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              bottom: 12.0,
-                                            ),
-                                            child: Text(
-                                              widget.ampm,
-                                              style: TextStyle(
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.w900,
-                                                color: titleColor,
+                                      ValueListenableBuilder<bool>(
+                                        valueListenable: timeFormatNotifier,
+                                        builder: (context, is24h, _) {
+                                          String displayTime = widget.time;
+                                          String? displayAmPm = widget.ampm;
+
+                                          if (is24h) {
+                                            final parts = widget.time.split(
+                                              ':',
+                                            );
+                                            int h = int.parse(parts[0]);
+                                            if (widget.ampm == 'PM' && h < 12)
+                                              h += 12;
+                                            if (widget.ampm == 'AM' && h == 12)
+                                              h = 0;
+                                            displayTime =
+                                                '${h.toString().padLeft(2, '0')}:${parts[1]}';
+                                            displayAmPm = null;
+                                          }
+
+                                          return Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.end,
+                                            children: [
+                                              Text(
+                                                displayTime,
+                                                style: GoogleFonts.jersey10(
+                                                  fontSize: 64,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: titleColor,
+                                                  height: 1.0,
+                                                ),
                                               ),
-                                            ),
-                                          ),
-                                        ],
+                                              if (displayAmPm != null) ...[
+                                                const SizedBox(width: 8),
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        bottom: 12.0,
+                                                      ),
+                                                  child: Text(
+                                                    displayAmPm,
+                                                    style: TextStyle(
+                                                      fontSize: 20,
+                                                      fontWeight:
+                                                          FontWeight.w900,
+                                                      color: titleColor,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          );
+                                        },
                                       ),
-                                      if (widget.days.isNotEmpty) ...[
-                                        const SizedBox(height: 12),
+                                      const SizedBox(height: 16),
+                                      if (widget.days.isEmpty)
                                         Text(
-                                          widget.days
-                                              .map((d) {
-                                                const days = [
-                                                  'PZT',
-                                                  'SAL',
-                                                  'ÇAR',
-                                                  'PER',
-                                                  'CUM',
-                                                  'CMT',
-                                                  'PAZ',
-                                                ];
-                                                return days[d - 1];
-                                              })
-                                              .join(', '),
-                                          style: const TextStyle(
+                                          'TEK SEFERLİK ALARM',
+                                          style: TextStyle(
                                             fontSize: 14,
                                             fontWeight: FontWeight.w900,
                                             color: AppColors.primary,
-                                            letterSpacing: 1.2,
+                                            letterSpacing: 1.5,
                                           ),
+                                        )
+                                      else
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: List.generate(7, (index) {
+                                            final dayNamesArr = [
+                                              'Pt',
+                                              'Sa',
+                                              'Ça',
+                                              'Pe',
+                                              'Cu',
+                                              'Ct',
+                                              'Pz',
+                                            ];
+                                            final dayIndex = index + 1;
+                                            final isHighlighted = widget.days
+                                                .contains(dayIndex);
+                                            return Container(
+                                              width: 28,
+                                              height: 26,
+                                              margin:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 2,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: isHighlighted
+                                                    ? AppColors.primary
+                                                          .withOpacity(
+                                                            isDarkMode
+                                                                ? 0.3
+                                                                : 0.1,
+                                                          )
+                                                    : Colors.transparent,
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                                border: Border.all(
+                                                  color: isHighlighted
+                                                      ? AppColors.primary
+                                                      : borderColor.withOpacity(
+                                                          0.3,
+                                                        ),
+                                                  width: 1.5,
+                                                ),
+                                              ),
+                                              child: Center(
+                                                child: Text(
+                                                  dayNamesArr[index],
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w900,
+                                                    color: isHighlighted
+                                                        ? (isDarkMode
+                                                              ? Colors.white
+                                                              : AppColors
+                                                                    .primary)
+                                                        : titleColor
+                                                              .withOpacity(0.3),
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          }),
                                         ),
-                                      ],
                                       const SizedBox(height: 16),
                                       Row(
                                         mainAxisAlignment:
@@ -381,18 +455,24 @@ class _InvitationScreenState extends State<InvitationScreen> {
                                 if (_isLoading)
                                   const CircularProgressIndicator()
                                 else ...[
-                                  PrimaryButton(
-                                    text: 'KABUL ET VE KATIL',
-                                    color: AppColors.success,
-                                    icon: Icons.check_circle_rounded,
-                                    onPressed: _acceptInvitation,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  PrimaryButton(
-                                    text: 'DAVETİ REDDET',
-                                    color: AppColors.error,
-                                    icon: Icons.cancel_rounded,
-                                    onPressed: _rejectInvitation,
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: PrimaryButton(
+                                          text: 'RET',
+                                          color: AppColors.error,
+                                          onPressed: _rejectInvitation,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: PrimaryButton(
+                                          text: 'KATIL',
+                                          color: AppColors.success,
+                                          onPressed: _acceptInvitation,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ],

@@ -91,9 +91,6 @@ void main() async {
 void _setupFCM() async {
   final messaging = FirebaseMessaging.instance;
 
-  // Bildirim izni iste
-  await messaging.requestPermission(alert: true, badge: true, sound: true);
-
   // FCM token'ını al ve Firebase'e kaydet
   await _saveFCMToken();
 
@@ -269,7 +266,7 @@ Future<void> _navigateToMissionScreen(int alarmId) async {
 
   // Tekrar eden alarmlar için bir sonraki günü planla
   try {
-    await AlarmSyncService.syncAlarmsWithDevice();
+    await AlarmSyncService.syncAlarmsWithDevice(dismissedAlarmId: alarmId);
   } catch (e) {
     debugPrint('[NAV] Error syncing alarms after mission: $e');
   }
