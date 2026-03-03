@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 import '../../../core/services/alarm_sync_service.dart';
@@ -9,12 +8,19 @@ import '../../../core/theme/app_colors.dart';
 import '../../components/primary_button.dart';
 import '../../components/brutalist_icon_button.dart';
 import '../../components/retro_mission_picker.dart';
+import '../../../data/repositories/data_repository.dart';
+import '../../../core/database/local_db.dart';
 import '../../../main.dart';
 
 class AlarmDetailScreen extends StatefulWidget {
   final String alarmId;
+  final bool isAnonymous;
 
-  const AlarmDetailScreen({super.key, required this.alarmId});
+  const AlarmDetailScreen({
+    super.key,
+    required this.alarmId,
+    this.isAnonymous = false,
+  });
 
   @override
   State<AlarmDetailScreen> createState() => _AlarmDetailScreenState();
@@ -31,9 +37,10 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
   bool _isLoading = true;
   bool _isModified = false;
   late bool _isAnonymous;
+  String? _activeUid;
 
   List<Map<String, dynamic>> _members = [];
-  StreamSubscription? _alarmSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _alarmSub;
   StreamSubscription? _pendingSub;
   bool _hasPendingUpdate = false;
   Map<String, dynamic>? _pendingUpdateData;
@@ -57,29 +64,32 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _isAnonymous = FirebaseAuth.instance.currentUser?.isAnonymous ?? false;
+    _isAnonymous = widget.isAnonymous;
+    _initActiveUid();
     _setupAlarmListener();
     _setupPendingUpdateListener();
   }
 
-  void _setupAlarmListener() {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUid == null) return;
-
-    if (widget.alarmId.startsWith('local_')) {
-      _loadLocalAlarm();
-      return;
+  Future<void> _initActiveUid() async {
+    final uid = await LocalDb.instance.getActiveUid();
+    if (mounted) {
+      setState(() {
+        _activeUid = uid;
+      });
     }
+  }
 
-    final db = FirebaseDatabase.instance.ref();
-    _alarmSub = db.child('alarms').child(widget.alarmId).onValue.listen((
-      event,
-    ) async {
-      if (event.snapshot.exists && event.snapshot.value is Map) {
-        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+  void _setupAlarmListener() async {
+    final currentUid = await LocalDb.instance.getActiveUid();
+    // if (currentUid == null) return; // Local UID is always present now
 
+    _alarmSub = DataRepository.instance.alarmsStream.listen((alarms) async {
+      // Bulamazsa null döner
+      final data = alarms.where((e) => e['id'] == widget.alarmId).firstOrNull;
+
+      if (data != null) {
         // Üyeleri çek
-        final membersMap = Map<String, dynamic>.from(data['members'] as Map);
+        final membersMap = Map<String, dynamic>.from(data['members'] ?? {});
         final membersAwakeList = (data['membersAwake'] as List?) ?? [];
 
         List<Map<String, dynamic>> memberInfoList = [];
@@ -87,14 +97,12 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         // Kabul edenleri ekle
         for (var uid in membersMap.keys) {
           String username = uid == currentUid ? 'SEN' : 'OYUNCU';
-          try {
-            final userSnap = await db.child('users').child(uid).get();
-            if (userSnap.exists) {
-              final userData = Map<String, dynamic>.from(userSnap.value as Map);
-              username = userData['username'] ?? username;
+
+          if (uid != currentUid) {
+            final userData = await DataRepository.instance.getUserOnce(uid);
+            if (userData != null && userData['username'] != null) {
+              username = userData['username'];
             }
-          } catch (e) {
-            debugPrint('User fetch error for $uid: $e');
           }
 
           memberInfoList.add({
@@ -130,9 +138,11 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
             _currentDifficulty = data['difficulty'] ?? 'ORTA';
             _groupName = data['groupName'] ?? 'BİR GRUP';
             _groupColor = data['color'] != null
-                ? Color(int.parse(data['color']))
+                ? Color(int.parse(data['color'].toString()))
                 : AppColors.primaryLight;
-            _isAdmin = data['creatorId'] == currentUid;
+            _isAdmin =
+                data['creatorId'] == currentUid ||
+                widget.alarmId.startsWith('local_');
             _members = memberInfoList;
             _selectedDays = List<int>.from(data['days'] ?? []);
             _isLoading = false;
@@ -143,9 +153,12 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
           });
         }
       } else {
-        if (mounted) {
-          // Explicitly pop only if we are still on this screen
+        if (mounted && !_isLoading && Navigator.canPop(context)) {
+          // if initially missing, it might just need sync, but we let it be
+          // If we previously loaded but now missing, it got deleted
           Navigator.of(context).pop();
+        } else if (mounted) {
+          // Not loaded yet, but if no alarms at all it might just be the first tick of the stream, do nothing yet
         }
       }
     });
@@ -162,9 +175,9 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     super.dispose();
   }
 
-  void _setupPendingUpdateListener() {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUid == null || widget.alarmId.startsWith('local_')) return;
+  void _setupPendingUpdateListener() async {
+    final currentUid = await LocalDb.instance.getActiveUid();
+    if (widget.alarmId.startsWith('local_')) return;
 
     final db = FirebaseDatabase.instance.ref();
     _pendingSub = db
@@ -220,37 +233,6 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     _minuteController = FixedExtentScrollController(initialItem: minute);
   }
 
-  Future<void> _loadLocalAlarm() async {
-    final alarms = await LocalAlarmService.getAlarms();
-    final data = alarms.firstWhere(
-      (a) => (a as Map)['id'] == widget.alarmId,
-      orElse: () => {},
-    );
-
-    if (data.isEmpty) {
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _currentTime = data['time'] ?? '00:00';
-        _currentAmPm = data['ampm'] ?? 'AM';
-        _currentMission = data['mission'] ?? 'BİLİNMİYOR';
-        _currentDifficulty = data['difficulty'] ?? 'ORTA';
-        _groupName = data['groupName'] ?? 'BİR GRUP';
-        _isAdmin = true; // Yerel alarm her zaman senindir
-        _members = [];
-        _selectedDays = List<int>.from(data['days'] ?? []);
-        _isLoading = false;
-
-        if (_isAdmin) {
-          _initWheelControllers();
-        }
-      });
-    }
-  }
-
   Future<void> _updateAlarmData() async {
     if (widget.alarmId.startsWith('local_')) {
       await LocalAlarmService.updateAlarm(widget.alarmId, {
@@ -268,12 +250,21 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
 
     // Eski değerleri sakla (değişiklik kontrolü için)
     final db = FirebaseDatabase.instance.ref();
-    final oldSnap = await db.child('alarms').child(widget.alarmId).get();
+    DataSnapshot? oldSnap;
+    try {
+      oldSnap = await db
+          .child('alarms')
+          .child(widget.alarmId)
+          .get()
+          .timeout(const Duration(seconds: 2));
+    } catch (e) {
+      debugPrint('Old alarm fetch timeout: $e');
+    }
 
     bool hasFunctionalChange = false;
     String oldTimeFormatted = '';
 
-    if (oldSnap.exists && oldSnap.value is Map) {
+    if (oldSnap != null && oldSnap.exists && oldSnap.value is Map) {
       final oldData = Map<String, dynamic>.from(oldSnap.value as Map);
 
       // Zaman kontrolü
@@ -307,18 +298,16 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     });
 
     // Diğer grup üyelerine sadece değişiklik varsa bildirim gönder
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUid != null && _isAdmin && hasFunctionalChange) {
+    final currentUid = await LocalDb.instance.getActiveUid();
+    if (_isAdmin &&
+        hasFunctionalChange &&
+        !widget.alarmId.startsWith('local_')) {
       // Güncelleme yapan kişinin adını al
       String updaterName = 'BİR ARKADAŞIN';
       try {
-        final userSnap = await db
-            .child('users')
-            .child(currentUid)
-            .child('username')
-            .get();
-        if (userSnap.exists) {
-          updaterName = userSnap.value as String;
+        final userData = await DataRepository.instance.getUserOnce(currentUid);
+        if (userData != null && userData['username'] != null) {
+          updaterName = userData['username'];
         }
       } catch (_) {}
 
@@ -353,11 +342,13 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
 
   Future<void> _closeRoom() async {
     // Önce bottom sheet'i kapat
-    Navigator.of(context).pop();
+    if (Navigator.canPop(context)) {
+      Navigator.of(context).pop();
+    }
 
     if (widget.alarmId.startsWith('local_')) {
       await LocalAlarmService.deleteAlarm(widget.alarmId);
-      if (mounted) Navigator.of(context).pop();
+      // Listener will handle popping the DetailScreen
       return;
     }
     final db = FirebaseDatabase.instance.ref();
@@ -376,8 +367,8 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
   }
 
   Future<void> _leaveGroup() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final uid = await LocalDb.instance.getActiveUid();
+    // if (user == null) return;
 
     if (!widget.alarmId.startsWith('local_')) {
       final db = FirebaseDatabase.instance.ref();
@@ -385,19 +376,12 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
           .child('alarms')
           .child(widget.alarmId)
           .child('members')
-          .child(user.uid)
+          .child(uid)
           .remove();
-      await db
-          .child('memberships')
-          .child(user.uid)
-          .child(widget.alarmId)
-          .remove();
+      await db.child('memberships').child(uid).child(widget.alarmId).remove();
     }
 
-    if (mounted) {
-      Navigator.of(context).pop(); // Botttom sheet'i kapat
-      Navigator.of(context).pop(); // Ekranı kapat
-    }
+    // Listener will handle popping the screen when membership is removed
   }
 
   @override
@@ -1110,11 +1094,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                       member['isAwake'],
                       isDarkMode,
                       isAdminRow:
-                          member['uid'] ==
-                          FirebaseAuth
-                              .instance
-                              .currentUser
-                              ?.uid, // Simplify for UI
+                          member['uid'] == _activeUid, // Simplify for UI
                       status: member['status'],
                     ),
                     if (member != _members.last)

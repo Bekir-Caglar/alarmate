@@ -17,16 +17,30 @@ class AlarmSyncService {
         await LocalAlarmService.updateAlarm(alarm['id'], {'isActive': active});
       }
     } else {
-      final db = FirebaseDatabase.instance.ref();
-      final memberships = await db.child('memberships').child(user.uid).get();
+      try {
+        final db = FirebaseDatabase.instance.ref();
+        final memberships = await db
+            .child('memberships')
+            .child(user.uid)
+            .get()
+            .timeout(const Duration(seconds: 3));
 
-      if (memberships.exists && memberships.value is Map) {
-        final alarmIds = (memberships.value as Map).keys;
-        final updates = <String, dynamic>{};
-        for (var id in alarmIds) {
-          updates['alarms/$id/isActive'] = active;
+        if (memberships.exists && memberships.value is Map) {
+          final alarmIds = (memberships.value as Map).keys;
+          final updates = <String, dynamic>{};
+          for (var id in alarmIds) {
+            updates['alarms/$id/isActive'] = active;
+          }
+          await db.update(updates).timeout(const Duration(seconds: 3));
         }
-        await db.update(updates);
+      } catch (e) {
+        // Timeout or Network Error (Offline mode) -> Edit Local Alarms Instead to prevent freeze
+        final alarms = await LocalAlarmService.getAlarms();
+        for (var alarm in alarms) {
+          await LocalAlarmService.updateAlarm(alarm['id'], {
+            'isActive': active,
+          });
+        }
       }
     }
   }
@@ -43,19 +57,32 @@ class AlarmSyncService {
     if (user.isAnonymous) {
       alarmsList = await LocalAlarmService.getAlarms();
     } else {
-      final db = FirebaseDatabase.instance.ref();
-      final memberships = await db.child('memberships').child(user.uid).get();
+      try {
+        final db = FirebaseDatabase.instance.ref();
+        final memberships = await db
+            .child('memberships')
+            .child(user.uid)
+            .get()
+            .timeout(const Duration(seconds: 3));
 
-      if (memberships.exists && memberships.value is Map) {
-        final alarmIds = (memberships.value as Map).keys;
-        for (var id in alarmIds) {
-          final alarmSnap = await db.child('alarms').child(id).get();
-          if (alarmSnap.exists) {
-            final data = Map<String, dynamic>.from(alarmSnap.value as Map);
-            data['id'] = id;
-            alarmsList.add(data);
+        if (memberships.exists && memberships.value is Map) {
+          final alarmIds = (memberships.value as Map).keys;
+          for (var id in alarmIds) {
+            final alarmSnap = await db
+                .child('alarms')
+                .child(id)
+                .get()
+                .timeout(const Duration(seconds: 3));
+            if (alarmSnap.exists) {
+              final data = Map<String, dynamic>.from(alarmSnap.value as Map);
+              data['id'] = id;
+              alarmsList.add(data);
+            }
           }
         }
+      } catch (e) {
+        // If offline, use local database alarms for device sync
+        alarmsList = await LocalAlarmService.getAlarms();
       }
     }
 

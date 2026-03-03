@@ -22,6 +22,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _notificationsEnabled = false;
   bool _overlayEnabled = false;
+  bool _isLoggingOut = false;
   late TextEditingController _nicknameController;
   late TextEditingController _phoneController;
 
@@ -314,33 +315,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(height: 12),
                       _buildSettingsCard(
                         context: context,
-                        title: 'ÇIKIŞ YAP',
-                        icon: Icons.logout_rounded,
+                        title: _isLoggingOut
+                            ? 'ÇIKIŞ YAPILIYOR...'
+                            : 'ÇIKIŞ YAP',
+                        icon: _isLoggingOut
+                            ? Icons.hourglass_empty_rounded
+                            : Icons.logout_rounded,
                         color: AppColors.error,
                         isDestructive: true,
                         isDarkMode: isDarkMode,
-                        onTap: () async {
-                          // Deactivate and sync alarms before logout
-                          await AlarmSyncService.toggleAllAlarms(false);
-                          await AlarmSyncService.syncAlarmsWithDevice();
-                          await Alarm.stopAll();
+                        onTap: _isLoggingOut
+                            ? () {}
+                            : () async {
+                                setState(() => _isLoggingOut = true);
+                                try {
+                                  // Deactivate and sync alarms before logout
+                                  await AlarmSyncService.toggleAllAlarms(false);
+                                  await AlarmSyncService.syncAlarmsWithDevice();
+                                  await Alarm.stopAll();
 
-                          // Mark that we need to activate alarms on next login
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setBool('pending_alarm_activation', true);
+                                  // Mark that we need to activate alarms on next login
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
+                                  await prefs.setBool(
+                                    'pending_alarm_activation',
+                                    true,
+                                  );
+                                  await prefs.setBool('isOfflineGuest', false);
 
-                          await GoogleSignIn().signOut();
-                          await FirebaseAuth.instance.signOut();
+                                  await GoogleSignIn().signOut();
+                                  await FirebaseAuth.instance.signOut();
 
-                          if (!context.mounted) return;
-                          Navigator.pushAndRemoveUntil(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const AuthWrapper(),
-                            ),
-                            (route) => false,
-                          );
-                        },
+                                  if (!context.mounted) return;
+                                  Navigator.pushAndRemoveUntil(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const AuthWrapper(),
+                                    ),
+                                    (route) => false,
+                                  );
+                                } catch (e) {
+                                  if (mounted)
+                                    setState(() => _isLoggingOut = false);
+                                }
+                              },
                       ),
                     ],
                   ),

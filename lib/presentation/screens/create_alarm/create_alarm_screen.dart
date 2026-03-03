@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../../../core/services/local_alarm_service.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/database/local_db.dart';
 import '../../components/primary_button.dart';
 import '../../components/retro_progress_bar.dart';
 import '../../components/retro_time_picker.dart';
 import '../../components/brutalist_icon_button.dart';
 import '../../../core/services/alarm_sync_service.dart';
 import '../../../main.dart';
+import '../../../data/repositories/data_repository.dart';
 
 class CreateAlarmScreen extends StatefulWidget {
-  const CreateAlarmScreen({super.key});
+  final bool isAnonymous;
+  const CreateAlarmScreen({super.key, this.isAnonymous = false});
 
   @override
   State<CreateAlarmScreen> createState() => _CreateAlarmScreenState();
@@ -74,7 +76,7 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
         Tween<Offset>(begin: Offset.zero, end: const Offset(-1.5, 0)).animate(
           CurvedAnimation(parent: _slideController, curve: Curves.easeInBack),
         );
-    _isAnonymous = FirebaseAuth.instance.currentUser?.isAnonymous ?? false;
+    _isAnonymous = widget.isAnonymous;
   }
 
   @override
@@ -182,8 +184,8 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
   }
 
   Future<void> _saveAlarm() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final uid = await LocalDb.instance.getActiveUid();
+    // if (user == null) return; // Removed because we have Local UID now
 
     final parts = _selectedTime.split(':');
     int hour = int.parse(parts[0]);
@@ -201,7 +203,7 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
         'difficulty': _selectedDifficulty,
         'days': _selectedDays,
         'isActive': true,
-        'creatorId': user.uid,
+        'creatorId': uid,
       });
     } else {
       // Kayıtlı kullanıcı için RTDB'de ID oluştur
@@ -215,30 +217,40 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
         'ampm': _selectedAmPm,
         'mission': _selectedMission,
         'difficulty': _selectedDifficulty,
-        'creatorId': user.uid,
+        'creatorId': uid,
         'isActive': true,
         'days': _selectedDays,
         'createdAt': ServerValue.timestamp,
-        'members': {user.uid: true},
+        'members': {uid: true},
         'invitedMembers': {
           for (var m in _invitedMembers) m['uid']: m['username'],
         },
       };
 
-      // Alarmlar node'una ekle
-      await newAlarmRef.set(alarmData);
+      // Alarmlar node'una ekle (await YOK, offline first için asenkron çalışır)
+      newAlarmRef.set(alarmData);
 
-      // Kendi membership'ine ekle
-      await db.child('memberships').child(user.uid).child(alarmId).set(true);
+      // Kendi membership'ine ekle (await YOK)
+      db.child('memberships').child(uid).child(alarmId).set(true);
 
       // Davetler gönder
+      // Offline iken takılmaması için timeout ekliyor veya cache bekliyoruz.
+      String inviterName = 'BİR ARKADAŞIN';
+      try {
+        final userData = await DataRepository.instance.getUserOnce(uid);
+        if (userData != null && userData['username'] != null) {
+          inviterName = userData['username'];
+        }
+      } catch (e) {
+        debugPrint(
+          'Kullanıcı adı alınamadı, offline olabilir (veya cache boş): $e',
+        );
+      }
+
       for (var member in _invitedMembers) {
-        await db.child('invitations').child(member['uid']).child(alarmId).set({
+        db.child('invitations').child(member['uid']).child(alarmId).set({
           'groupName': _nameController.text.toUpperCase(),
-          'inviterName':
-              (await db.child('users').child(user.uid).child('username').get())
-                  .value ??
-              'BİR ARKADAŞIN',
+          'inviterName': inviterName,
           'time': _selectedTime,
           'ampm': _selectedAmPm,
           'mission': _selectedMission,
@@ -264,16 +276,6 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
           backgroundColor: Colors.green,
         ),
       );
-      Navigator.pop(context);
-    }
-  }
-
-  void _prevStep() async {
-    if (_currentIndex > 0) {
-      setState(() {
-        _currentIndex--;
-      });
-    } else {
       Navigator.pop(context);
     }
   }
@@ -357,7 +359,10 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          BrutalistIconButton(icon: Icons.close_rounded, onTap: _prevStep),
+          BrutalistIconButton(
+            icon: Icons.close_rounded,
+            onTap: () => Navigator.pop(context),
+          ),
           Text(
             'YENİ ODA KUR',
             style: TextStyle(

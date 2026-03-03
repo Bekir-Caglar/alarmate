@@ -1,50 +1,49 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../database/local_db.dart';
 
 class LocalAlarmService {
   static const String _storageKey = 'guest_alarms';
 
-  static Future<void> saveAlarm(Map<String, dynamic> alarm) async {
+  /// Sadece misafir mod veya eski alarmları migrate et
+  static Future<void> migrateOldAlarms() async {
     final prefs = await SharedPreferences.getInstance();
-    final alarms = await getAlarms();
+    final data = prefs.getString(_storageKey);
+    if (data != null) {
+      final List<dynamic> list = jsonDecode(data);
+      for (var e in list) {
+        final alarm = Map<String, dynamic>.from(e);
+        await LocalDb.instance.save('alarms', alarm['id'], alarm);
+      }
+      await prefs.remove(_storageKey);
+    }
+  }
 
-    // Generate a unique ID if not present
+  static Future<void> saveAlarm(Map<String, dynamic> alarm) async {
     if (alarm['id'] == null) {
       alarm['id'] = 'local_${DateTime.now().millisecondsSinceEpoch}';
     }
-
-    alarms.add(alarm);
-    await prefs.setString(_storageKey, jsonEncode(alarms));
+    await LocalDb.instance.save('alarms', alarm['id'], alarm);
   }
 
   static Future<List<Map<String, dynamic>>> getAlarms() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString(_storageKey);
-    if (data == null) return [];
-
-    final List<dynamic> list = jsonDecode(data);
-    return list.map((e) => Map<String, dynamic>.from(e)).toList();
+    await migrateOldAlarms();
+    final all = await LocalDb.instance.getAll('alarms');
+    return all.where((e) => (e['id'] as String).startsWith('local_')).toList();
   }
 
   static Future<void> updateAlarm(
     String id,
     Map<String, dynamic> updates,
   ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final alarms = await getAlarms();
-
-    final index = alarms.indexWhere((a) => a['id'] == id);
-    if (index != -1) {
-      alarms[index] = {...alarms[index], ...updates};
-      await prefs.setString(_storageKey, jsonEncode(alarms));
+    final old = await LocalDb.instance.getById('alarms', id);
+    if (old != null) {
+      final updated = {...old, ...updates};
+      await LocalDb.instance.save('alarms', id, updated);
     }
   }
 
   static Future<void> deleteAlarm(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    final alarms = await getAlarms();
-
-    alarms.removeWhere((a) => a['id'] == id);
-    await prefs.setString(_storageKey, jsonEncode(alarms));
+    await LocalDb.instance.delete('alarms', id);
   }
 }

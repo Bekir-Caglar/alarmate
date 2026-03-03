@@ -10,7 +10,6 @@ import '../alarm_detail/alarm_detail_screen.dart';
 import '../create_alarm/create_alarm_screen.dart';
 import '../settings/settings_screen.dart';
 import '../invitation/invitation_screen.dart';
-import '../mission/mission_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../../../core/services/alarm_sync_service.dart';
@@ -18,6 +17,7 @@ import '../../../core/services/local_alarm_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import '../../../main.dart';
+import '../../../data/repositories/data_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -34,21 +34,67 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAnonymous = false;
   bool _overlayPermissionMissing = false;
 
-  StreamSubscription<DatabaseEvent>? _invitationsSubscription;
-  StreamSubscription<DatabaseEvent>? _alarmsSubscription;
   StreamSubscription<DatabaseEvent>? _pendingUpdatesSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _localAlarmsSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _localInvitationsSub;
+  StreamSubscription<Map<String, dynamic>?>? _userSub;
 
   List<Map<String, dynamic>> _pendingUpdates = [];
 
   int _currentInvitationIndex = 0;
 
   String? _username;
+  bool _isOnline = true; // Connection state for Firebase
+  bool _isFirstConnectivityCheck = true;
+  Timer? _connectivityTimer;
 
   @override
   void initState() {
     super.initState();
     _loadUserInfo();
+    _setupLocalStreams();
     _setupDatabaseListeners();
+  }
+
+  void _setupLocalStreams() {
+    DataRepository.instance.startFirebaseSync();
+
+    _localAlarmsSub = DataRepository.instance.alarmsStream.listen((alarms) {
+      if (mounted) {
+        // Alarmları zaman (saat) sırasına göre dizeceğiz ki sıralamalar rastgele atlamasın
+        alarms.sort((a, b) {
+          int minA = _timeToMinutes(a['time'] ?? '00:00', a['ampm'] ?? 'AM');
+          int minB = _timeToMinutes(b['time'] ?? '00:00', b['ampm'] ?? 'AM');
+          return minA.compareTo(minB);
+        });
+
+        setState(() {
+          _alarms = alarms;
+          _isLoadingAlarms = false;
+        });
+      }
+    });
+
+    _localInvitationsSub = DataRepository.instance.invitationsStream.listen((
+      invites,
+    ) {
+      if (mounted) {
+        setState(() {
+          _invitations = invites;
+        });
+      }
+    });
+
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid != null) {
+      _userSub = DataRepository.instance.watchUser(currentUid).listen((data) {
+        if (mounted && data != null && data['username'] != null) {
+          setState(() {
+            _username = data['username'];
+          });
+        }
+      });
+    }
   }
 
   void _setupDatabaseListeners() {
@@ -60,34 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final db = FirebaseDatabase.instance.ref();
 
-    // Davetleri dinle
-    _invitationsSubscription = db
-        .child('invitations')
-        .child(user.uid)
-        .onValue
-        .listen(
-          (event) {
-            if (event.snapshot.exists && event.snapshot.value is Map) {
-              final data = Map<String, dynamic>.from(
-                event.snapshot.value as Map,
-              );
-              final list = data.entries.map((e) {
-                final val = Map<String, dynamic>.from(e.value as Map);
-                val['id'] = e.key;
-                return val;
-              }).toList();
-              if (mounted) setState(() => _invitations = list);
-            } else {
-              if (mounted) setState(() => _invitations = []);
-            }
-          },
-          onError: (error) {
-            debugPrint('Invitations error: $error');
-            if (mounted) setState(() => _invitations = []);
-          },
-        );
-
-    // Bekleyen güncellemeleri dinle
+    // Bekleyen güncellemeleri dinle (Firebase UI spesifik)
     _pendingUpdatesSubscription = db
         .child('pendingUpdates')
         .child(user.uid)
@@ -114,68 +133,57 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         );
 
-    // Alarmları dinle (Kullanıcının üye olduğu alarmlar)
-    _alarmsSubscription = db
-        .child('memberships')
-        .child(user.uid)
-        .onValue
-        .listen(
-          (event) async {
-            if (event.snapshot.exists && event.snapshot.value is Map) {
-              final alarmIds = Map<String, dynamic>.from(
-                event.snapshot.value as Map,
-              ).keys.toList();
-              List<Map<String, dynamic>> fetchedAlarms = [];
+    // Bağlantı durumunu dinle (Offline banner için)
+    FirebaseDatabase.instance.ref('.info/connected').onValue.listen((event) {
+      final connected = event.snapshot.value as bool? ?? false;
+      _connectivityTimer?.cancel();
 
-              try {
-                for (var id in alarmIds) {
-                  final alarmSnap = await db.child('alarms').child(id).get();
-                  if (alarmSnap.exists && alarmSnap.value is Map) {
-                    final alarmData = Map<String, dynamic>.from(
-                      alarmSnap.value as Map,
-                    );
-                    alarmData['id'] = id;
-                    fetchedAlarms.add(alarmData);
-                  }
-                }
-              } catch (e) {
-                debugPrint('Error fetching alarm details: $e');
-              }
-
-              if (mounted) {
-                setState(() {
-                  _alarms = fetchedAlarms;
-                  _isLoadingAlarms = false;
-                });
-              }
-            } else {
-              if (mounted) {
-                setState(() {
-                  _alarms = [];
-                  _isLoadingAlarms = false;
-                });
-              }
-            }
-          },
-          onError: (error) {
-            debugPrint('Alarms error: $error');
-            if (mounted) {
-              setState(() {
-                _alarms = [];
-                _isLoadingAlarms = false;
-              });
-            }
-          },
-        );
+      if (connected) {
+        if (mounted) {
+          if (!_isFirstConnectivityCheck && !_isOnline && !_isAnonymous) {
+            // İnternet sonradan geri geldi! Senkronizasyonu başlat
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'İnternet bağlantısı sağlandı, veriler güncelleniyor...',
+                ),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 2),
+              ),
+            );
+            DataRepository.instance.forceSync();
+          }
+          setState(() {
+            _isOnline = true;
+            _isFirstConnectivityCheck = false;
+          });
+        }
+      } else {
+        // Saniyelik gidip gelmeleri engellemek için Timer (Debounce)
+        _connectivityTimer = Timer(const Duration(milliseconds: 2500), () {
+          if (mounted) {
+            setState(() {
+              _isOnline = false;
+              _isFirstConnectivityCheck = false;
+            });
+          }
+        });
+      }
+    });
   }
 
   Future<void> _loadUserInfo() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      setState(() {
-        _isAnonymous = user.isAnonymous;
-      });
+    final prefs = await SharedPreferences.getInstance();
+    final isOfflineGuest = prefs.getBool('isOfflineGuest') ?? false;
 
+    if (mounted) {
+      setState(() {
+        _isAnonymous = (user?.isAnonymous ?? false) || isOfflineGuest;
+      });
+    }
+
+    if (user != null) {
       // Handle pending activation after login
       final prefs = await SharedPreferences.getInstance();
       final pendingActivation =
@@ -189,22 +197,6 @@ class _HomeScreenState extends State<HomeScreen> {
       await AlarmSyncService.syncAlarmsWithDevice();
 
       if (!user.isAnonymous) {
-        String? username;
-        final snapshot = await FirebaseDatabase.instance
-            .ref()
-            .child('users')
-            .child(user.uid)
-            .child('username')
-            .get();
-        if (snapshot.exists) {
-          username = snapshot.value as String?;
-        }
-        if (mounted) {
-          setState(() {
-            _username = username;
-          });
-        }
-
         // FCM token'ını kaydet
         try {
           final fcmToken = await FirebaseMessaging.instance.getToken();
@@ -219,8 +211,6 @@ class _HomeScreenState extends State<HomeScreen> {
         } catch (e) {
           debugPrint('FCM token kaydedilemedi: $e');
         }
-      } else {
-        _loadLocalAlarms();
       }
     }
 
@@ -240,26 +230,31 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadLocalAlarms() async {
-    if (mounted) {
-      setState(() {
-        _isLoadingAlarms = true;
-        _alarms = []; // Reset list to ensure fresh build
-      });
-    }
-    final localAlarms = await LocalAlarmService.getAlarms();
-    if (mounted) {
-      setState(() {
-        _alarms = localAlarms;
-        _isLoadingAlarms = false;
-      });
+    // Left empty since StreamBuilder handles everything seamlessly now
+  }
+
+  int _timeToMinutes(String timeStr, String ampm) {
+    try {
+      final parts = timeStr.trim().split(':');
+      int h = int.parse(parts[0].trim());
+      int m = int.parse(parts[1].trim());
+      if (h <= 12) {
+        if (ampm == 'PM' && h != 12) h += 12;
+        if (ampm == 'AM' && h == 12) h = 0;
+      }
+      return h * 60 + m;
+    } catch (_) {
+      return 0;
     }
   }
 
   @override
   void dispose() {
-    _invitationsSubscription?.cancel();
-    _alarmsSubscription?.cancel();
+    _connectivityTimer?.cancel();
     _pendingUpdatesSubscription?.cancel();
+    _localAlarmsSub?.cancel();
+    _localInvitationsSub?.cancel();
+    _userSub?.cancel();
     super.dispose();
   }
 
@@ -357,6 +352,38 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildOfflineBanner(bool isDarkMode) {
+    if (_isOnline || _isAnonymous) return const SizedBox.shrink();
+
+    final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16.0),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: BoxDecoration(
+        color: AppColors.error,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: 2),
+      ),
+      child: Row(
+        children: const [
+          Icon(Icons.wifi_off_rounded, color: Colors.white),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'İNTERNET BAĞLANTISI YOK\nDeğişikliklerin tekrar çevrimiçi olduğunda senkronize edilecek.',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
@@ -390,139 +417,152 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _isLoadingAlarms
                       ? const Center(child: CircularProgressIndicator())
-                      : (_alarms.isNotEmpty ||
-                            _invitations.isNotEmpty ||
-                            _pendingUpdates.isNotEmpty)
-                      ? ListView(
-                          padding: const EdgeInsets.all(24),
-                          children: [
-                            if (_pendingUpdates.isNotEmpty) ...[
-                              ..._pendingUpdates.map(
-                                (update) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 12.0),
-                                  child: _buildPendingUpdateBanner(
-                                    context,
-                                    isDarkMode,
-                                    update,
-                                  ),
+                      : RefreshIndicator(
+                          onRefresh: () async {
+                            if (!_isAnonymous) {
+                              await DataRepository.instance.forceSync();
+                            }
+                          },
+                          color: AppColors.primary,
+                          child:
+                              (_alarms.isNotEmpty ||
+                                  _invitations.isNotEmpty ||
+                                  _pendingUpdates.isNotEmpty)
+                              ? ListView(
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  padding: const EdgeInsets.all(24),
+                                  children: [
+                                    if (_pendingUpdates.isNotEmpty) ...[
+                                      ..._pendingUpdates.map(
+                                        (update) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 12.0,
+                                          ),
+                                          child: _buildPendingUpdateBanner(
+                                            context,
+                                            isDarkMode,
+                                            update,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                    ],
+
+                                    if (_invitations.isNotEmpty) ...[
+                                      _buildInvitationBanner(
+                                        context,
+                                        isDarkMode,
+                                      ),
+                                      const SizedBox(height: 16),
+                                    ],
+
+                                    if (Platform.isAndroid &&
+                                        _overlayPermissionMissing) ...[
+                                      _buildOverlayPermissionWarning(
+                                        isDarkMode,
+                                      ),
+                                      const SizedBox(height: 32),
+                                    ],
+
+                                    _buildOfflineBanner(isDarkMode),
+
+                                    if (_alarms.isNotEmpty) ...[
+                                      _buildSectionTitle(
+                                        'AKTİF ALARMLAR',
+                                        isDarkMode,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      ..._alarms.map(
+                                        (alarm) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 16.0,
+                                          ),
+                                          child: _buildAlarmCard(
+                                            context: context,
+                                            alarmId: alarm['id'],
+                                            time: alarm['time'] ?? '00:00',
+                                            ampm: alarm['ampm'] ?? 'AM',
+                                            groupName:
+                                                alarm['groupName'] ??
+                                                'BİR GRUP',
+                                            membersAwake:
+                                                (alarm['membersAwake'] as List?)
+                                                    ?.length ??
+                                                0,
+                                            totalMembers:
+                                                (alarm['members'] as Map?)
+                                                    ?.length ??
+                                                1,
+                                            color: alarm['color'] != null
+                                                ? Color(
+                                                    int.parse(alarm['color']),
+                                                  )
+                                                : AppColors.primaryLight,
+                                            isAdmin:
+                                                alarm['creatorId'] ==
+                                                FirebaseAuth
+                                                    .instance
+                                                    .currentUser
+                                                    ?.uid,
+                                            isActive: alarm['isActive'] ?? true,
+                                            isDarkMode: isDarkMode,
+                                            isAnonymous: _isAnonymous,
+                                            onToggle: () async {
+                                              final bool newActive =
+                                                  !(alarm['isActive'] ?? true);
+                                              if (_isAnonymous) {
+                                                await LocalAlarmService.updateAlarm(
+                                                  alarm['id'],
+                                                  {'isActive': newActive},
+                                                );
+                                                await _loadLocalAlarms();
+                                              } else {
+                                                // Update UI locally first for instant feedback
+                                                setState(() {
+                                                  final index = _alarms
+                                                      .indexWhere(
+                                                        (a) =>
+                                                            a['id'] ==
+                                                            alarm['id'],
+                                                      );
+                                                  if (index != -1) {
+                                                    _alarms[index]['isActive'] =
+                                                        newActive;
+                                                  }
+                                                });
+
+                                                await FirebaseDatabase.instance
+                                                    .ref()
+                                                    .child('alarms')
+                                                    .child(alarm['id'])
+                                                    .update({
+                                                      'isActive': newActive,
+                                                    });
+                                              }
+
+                                              // Sync with hardware alarm package
+                                              await AlarmSyncService.syncAlarmsWithDevice();
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                )
+                              : ListView(
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  children: [
+                                    SizedBox(
+                                      height:
+                                          MediaQuery.of(context).size.height *
+                                          0.6,
+                                      child: _buildEmptyState(isDarkMode),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                            ],
-
-                            if (_invitations.isNotEmpty) ...[
-                              _buildInvitationBanner(context, isDarkMode),
-                              const SizedBox(height: 16),
-                            ],
-
-                            if (Platform.isAndroid &&
-                                _overlayPermissionMissing) ...[
-                              _buildOverlayPermissionWarning(isDarkMode),
-                              const SizedBox(height: 32),
-                            ],
-
-                            _buildSectionTitle(
-                              'GÖREV TESTLERİ (DEBUG)',
-                              isDarkMode,
-                            ),
-                            const SizedBox(height: 16),
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  _buildMissionDebugButton(
-                                    context,
-                                    'MATEMATİK SINAVI',
-                                    Icons.calculate_rounded,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _buildMissionDebugButton(
-                                    context,
-                                    'RENK TUZAĞI',
-                                    Icons.palette_rounded,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _buildMissionDebugButton(
-                                    context,
-                                    'TELEFONU SALLA',
-                                    Icons.vibration_rounded,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _buildMissionDebugButton(
-                                    context,
-                                    'BARKOD OKUT',
-                                    Icons.qr_code_scanner_rounded,
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            if (_alarms.isNotEmpty) ...[
-                              const SizedBox(height: 32),
-                              _buildSectionTitle('AKTİF ALARMLAR', isDarkMode),
-                              const SizedBox(height: 16),
-                              ..._alarms.map(
-                                (alarm) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 16.0),
-                                  child: _buildAlarmCard(
-                                    context: context,
-                                    alarmId: alarm['id'],
-                                    time: alarm['time'] ?? '00:00',
-                                    ampm: alarm['ampm'] ?? 'AM',
-                                    groupName: alarm['groupName'] ?? 'BİR GRUP',
-                                    membersAwake:
-                                        (alarm['membersAwake'] as List?)
-                                            ?.length ??
-                                        0,
-                                    totalMembers:
-                                        (alarm['members'] as Map?)?.length ?? 1,
-                                    color: alarm['color'] != null
-                                        ? Color(int.parse(alarm['color']))
-                                        : AppColors.primaryLight,
-                                    isAdmin:
-                                        alarm['creatorId'] ==
-                                        FirebaseAuth.instance.currentUser?.uid,
-                                    isActive: alarm['isActive'] ?? true,
-                                    isDarkMode: isDarkMode,
-                                    isAnonymous: _isAnonymous,
-                                    onToggle: () async {
-                                      final bool newActive =
-                                          !(alarm['isActive'] ?? true);
-                                      if (_isAnonymous) {
-                                        await LocalAlarmService.updateAlarm(
-                                          alarm['id'],
-                                          {'isActive': newActive},
-                                        );
-                                        await _loadLocalAlarms();
-                                      } else {
-                                        // Update UI locally first for instant feedback
-                                        setState(() {
-                                          final index = _alarms.indexWhere(
-                                            (a) => a['id'] == alarm['id'],
-                                          );
-                                          if (index != -1) {
-                                            _alarms[index]['isActive'] =
-                                                newActive;
-                                          }
-                                        });
-
-                                        await FirebaseDatabase.instance
-                                            .ref()
-                                            .child('alarms')
-                                            .child(alarm['id'])
-                                            .update({'isActive': newActive});
-                                      }
-
-                                      // Sync with hardware alarm package
-                                      await AlarmSyncService.syncAlarmsWithDevice();
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        )
-                      : _buildEmptyState(isDarkMode),
+                        ),
                 ),
 
                 // Bottom Action
@@ -1295,7 +1335,8 @@ class _HomeScreenState extends State<HomeScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => AlarmDetailScreen(alarmId: alarmId),
+            builder: (context) =>
+                AlarmDetailScreen(alarmId: alarmId, isAnonymous: _isAnonymous),
           ),
         ).then((_) {
           if (_isAnonymous) {
@@ -1479,27 +1520,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBrutalistFab(bool isDarkMode) {
     return _BrutalistFab(
       isDarkMode: isDarkMode,
+      isAnonymous: _isAnonymous,
       onRefresh: () {
         if (_isAnonymous) _loadLocalAlarms();
-      },
-    );
-  }
-
-  Widget _buildMissionDebugButton(
-    BuildContext context,
-    String title,
-    IconData icon,
-  ) {
-    return BrutalistIconButton(
-      icon: icon,
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                MissionScreen(missionType: title, difficulty: 'ORTA'),
-          ),
-        );
       },
     );
   }
@@ -1507,8 +1530,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _BrutalistFab extends StatefulWidget {
   final bool isDarkMode;
+  final bool isAnonymous;
   final VoidCallback onRefresh;
-  const _BrutalistFab({required this.isDarkMode, required this.onRefresh});
+  const _BrutalistFab({
+    required this.isDarkMode,
+    required this.isAnonymous,
+    required this.onRefresh,
+  });
 
   @override
   State<_BrutalistFab> createState() => _BrutalistFabState();
@@ -1533,7 +1561,10 @@ class _BrutalistFabState extends State<_BrutalistFab> {
         setState(() => _isPressed = false);
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const CreateAlarmScreen()),
+          MaterialPageRoute(
+            builder: (context) =>
+                CreateAlarmScreen(isAnonymous: widget.isAnonymous),
+          ),
         ).then((_) => widget.onRefresh());
       },
       onTapCancel: () => setState(() => _isPressed = false),

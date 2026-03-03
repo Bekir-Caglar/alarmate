@@ -1,6 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../components/primary_button.dart';
 import '../home/home_screen.dart';
@@ -15,7 +16,6 @@ class ModeSelectionScreen extends StatefulWidget {
 
 class _ModeSelectionScreenState extends State<ModeSelectionScreen>
     with SingleTickerProviderStateMixin {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _isLoading = false;
   int? _selectedIndex;
 
@@ -39,52 +39,66 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen>
     super.dispose();
   }
 
-  Future<void> _signInAnonymously() async {
-    setState(() => _isLoading = true);
+  Future<bool> _hasInternet() async {
     try {
-      await _auth.signInAnonymously();
-      if (!mounted) return;
-
-      // Explicit navigation for robustness
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
-        (route) => false,
-      );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'MİSAFİR OLARAK GİRİŞ YAPILDI!',
-            style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white),
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      setState(() => _isLoading = false);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Misafir girişi başarısız oldu.',
-            style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white),
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+      final result = await InternetAddress.lookup('google.com');
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
     }
   }
 
-  void _onContinue() {
+  Future<void> _enterGuestMode() async {
+    setState(() => _isLoading = true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isOfflineGuest', true);
+
+    // Generate a local ID if it doesn't exist
+    if (!prefs.containsKey('local_guest_id')) {
+      final localId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+      await prefs.setString('local_guest_id', localId);
+    }
+
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
+      (route) => false,
+    );
+  }
+
+  void _onContinue() async {
     if (_selectedIndex == null || _isLoading) return;
+
     if (_selectedIndex == 0) {
+      setState(() => _isLoading = true);
+      final isOnline = await _hasInternet();
+      setState(() => _isLoading = false);
+
+      if (!isOnline) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'BU MOD İÇİN İNTERNET BAĞLANTISI GEREKLİDİR.',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (!mounted) return;
       Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => const AuthScreen()),
       );
     } else {
-      _signInAnonymously();
+      _enterGuestMode();
     }
   }
 

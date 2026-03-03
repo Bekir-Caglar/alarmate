@@ -62,6 +62,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseDatabase.instance.setPersistenceEnabled(true);
   await Alarm.init();
 
   // FCM arka plan handler'ını kaydet
@@ -354,6 +355,7 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoading = true;
   bool _hasSeenOnboarding = false;
+  bool _isOfflineGuest = false;
 
   @override
   void initState() {
@@ -372,25 +374,35 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
 
     final hasSeenOnboarding = prefs.getBool('has_seen_onboarding') ?? false;
+    final isOfflineGuest = prefs.getBool('isOfflineGuest') ?? false;
 
     // Profili tamamlanmamış kullanıcıları temizle
     final user = FirebaseAuth.instance.currentUser;
     if (user != null && !user.isAnonymous) {
-      final snapshot = await FirebaseDatabase.instance
-          .ref()
-          .child('users')
-          .child(user.uid)
-          .child('username')
-          .get();
-      if (!snapshot.exists) {
-        // Auth olmuş ama profil oluşturmamış → çıkış yap
-        await FirebaseAuth.instance.signOut();
-      }
+      // Arka planda kontrol et, UI'ı (Splash Screen) bloklama
+      Future.microtask(() async {
+        try {
+          final snapshot = await FirebaseDatabase.instance
+              .ref()
+              .child('users')
+              .child(user.uid)
+              .child('username')
+              .get()
+              .timeout(const Duration(seconds: 2));
+          if (!snapshot.exists) {
+            // Auth olmuş ama profil oluşturmamış → çıkış yap
+            await FirebaseAuth.instance.signOut();
+          }
+        } catch (e) {
+          debugPrint('Kullanıcı kontrolü zaman aşımına uğradı veya hata: $e');
+        }
+      });
     }
 
     if (!mounted) return;
     setState(() {
       _hasSeenOnboarding = hasSeenOnboarding;
+      _isOfflineGuest = isOfflineGuest;
       _isLoading = false;
     });
   }
@@ -411,6 +423,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
 
         if (snapshot.hasData && snapshot.data != null) {
+          return const HomeScreen();
+        }
+
+        if (_isOfflineGuest) {
           return const HomeScreen();
         }
 
