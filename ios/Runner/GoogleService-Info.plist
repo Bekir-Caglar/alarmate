@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>828283289351-2a385kak05sule7d5kb7pqr1unaj0h6p.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.828283289351-2a385kak05sule7d5kb7pqr1unaj0h6p</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>828283289351-lq0j05jh2c2d5jg5ehdogmlc38dpq0bi.apps.googleusercontent.com</string>
+	<key>API_KEY</key>
+	<string>AIzaSyCT-TsiK-ul5jfdNuud2QaEoFKW6yEMgfE</string>
+	<key>GCM_SENDER_ID</key>
+	<string>828283289351</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.bekircaglar.alarmate</string>
+	<key>PROJECT_ID</key>
+	<string>alarmate-8e25a</string>
+	<key>STORAGE_BUCKET</key>
+	<string>alarmate-8e25a.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:828283289351:ios:a0e283d7c6a9fc2c5ccfa2</string>
+	<key>DATABASE_URL</key>
+	<string>https://alarmate-8e25a-default-rtdb.europe-west1.firebasedatabase.app</string>
+</dict>
+</plist>
