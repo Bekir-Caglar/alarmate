@@ -1,16 +1,41 @@
-# alarmate
+# ⏰ Alarmate
 
-A new Flutter project.
+Alarmate is a powerful and interactive alarm clock application developed with Flutter. It ensures you wake up by requiring you to complete various missions!
 
-## Getting Started
+## 🚀 Features
 
-This project is a starting point for a Flutter application.
+- **Rich Missions**: Choose from multiple mission types to stop your alarm:
+  - 🔢 **Math**: Solve math problems to wake your brain.
+  - 📷 **Barcode**: Scan a specific barcode (e.g., in the bathroom).
+  - 🎨 **Color Matching**: Match the specified color pattern.
+  - 🤝 **Shake**: Shake your phone a set number of times.
+  - 🚶 **Step**: Walk a certain number of steps.
+- **Retro Aesthetic**: Modern UI with smooth animations and a premium look.
+- **Firebase Integration**: Robust backend for synchronization and notifications.
 
-A few resources to get you started if this is your first Flutter project:
+## 📱 Getting Started
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/bekircaglar/alarmate.git
+    ```
+2.  **Install dependencies**:
+    ```bash
+    flutter pub get
+    ```
+3.  **Run the application**:
+    ```bash
+    flutter run
+    ```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 🛠 Tech Stack
+
+- **Framework**: Flutter
+- **Backend**: Firebase (Auth, Database, Cloud Functions)
+- **Local Storage**: SQFLite
+- **Notifications**: Flutter Local Notifications
+
+---
+
+*Made with ❤️ by [bekircaglar](https://github.com/bekircaglar)*
+
