@@ -223,6 +223,7 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
         'days': _selectedDays,
         'createdAt': ServerValue.timestamp,
         'members': {uid: true},
+        'memberActiveStatuses': {uid: true},
         'invitedMembers': {
           for (var m in _invitedMembers) m['uid']: m['username'],
         },

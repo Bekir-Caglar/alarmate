@@ -93,25 +93,31 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         // Üyeleri çek
         final membersMap = Map<String, dynamic>.from(data['members'] ?? {});
         final membersAwakeList = (data['membersAwake'] as List?) ?? [];
+        final activeStatuses = Map<String, dynamic>.from(
+          data['memberActiveStatuses'] ?? {},
+        );
 
         List<Map<String, dynamic>> memberInfoList = [];
 
         // Kabul edenleri ekle
         for (var uid in membersMap.keys) {
-          String username = uid == currentUid ? 'SEN' : 'OYUNCU';
+          String username = 'OYUNCU';
+          final userData = await DataRepository.instance.getUserOnce(uid);
+          if (userData != null && userData['username'] != null) {
+            username = userData['username'];
+          }
 
-          if (uid != currentUid) {
-            final userData = await DataRepository.instance.getUserOnce(uid);
-            if (userData != null && userData['username'] != null) {
-              username = userData['username'];
-            }
+          if (uid == currentUid) {
+            username = '$username (Sen)';
           }
 
           memberInfoList.add({
             'uid': uid,
             'username': username,
             'isAwake': membersAwakeList.contains(uid),
+            'isActive': activeStatuses[uid] ?? false,
             'isMe': uid == currentUid,
+            'isCreator': uid == data['creatorId'],
             'status': 'JOINED',
           });
         }
@@ -127,10 +133,19 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
               'username': entry.value.toString(),
               'isAwake': false,
               'isMe': false,
+              'isCreator': entry.key == data['creatorId'],
               'status': 'PENDING',
             });
           }
         }
+
+        // Sıralama: Yönetici (kurucu) her zaman en üstte
+        final creatorId = data['creatorId'];
+        memberInfoList.sort((a, b) {
+          if (a['uid'] == creatorId) return -1;
+          if (b['uid'] == creatorId) return 1;
+          return 0;
+        });
 
         if (mounted) {
           setState(() {
@@ -548,6 +563,124 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         );
       }
     }
+  }
+
+  Future<void> _sendNudge(String memberUid, String username) async {
+    final currentUid = await LocalDb.instance.getActiveUid();
+
+    // Yönetici adını al
+    String adminName = 'Yönetici';
+    try {
+      final userData = await DataRepository.instance.getUserOnce(currentUid);
+      if (userData != null && userData['username'] != null) {
+        adminName = userData['username'];
+      }
+    } catch (_) {}
+
+    try {
+      await FirebaseDatabase.instance
+          .ref()
+          .child('nudges')
+          .child(memberUid)
+          .child(widget.alarmId)
+          .set({
+            'nudgedBy': adminName,
+            'groupName': _groupName,
+            'timestamp': ServerValue.timestamp,
+          });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$username dürtüldü! 👈'),
+            backgroundColor: Colors.blueAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Dürtme gönderilemedi: $e');
+    }
+  }
+
+  void _showMemberActionsBottomSheet(
+    BuildContext context,
+    bool isDarkMode,
+    Map<String, dynamic> member,
+  ) {
+    final cardBg = isDarkMode ? AppColors.surfaceDark : Colors.white;
+    final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
+    final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
+    final titleColor = isDarkMode
+        ? AppColors.textDarkPrimary
+        : AppColors.textPrimary;
+    final isActive = member['isActive'] ?? false;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+          decoration: BoxDecoration(
+            color: cardBg,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(32),
+              topRight: Radius.circular(32),
+            ),
+            border: Border(top: BorderSide(color: borderColor, width: 4)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: shadowColor.withAlpha(76),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                member['username'].toString().toUpperCase(),
+                style: GoogleFonts.outfit(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: titleColor,
+                ),
+              ),
+              const SizedBox(height: 24),
+              if (!isActive && member['status'] == 'JOINED') ...[
+                _buildBottomSheetButton(
+                  title: 'DÜRT',
+                  icon: Icons.touch_app_rounded,
+                  color: Colors.blueAccent,
+                  textColor: Colors.white,
+                  isDarkMode: isDarkMode,
+                  onTap: () {
+                    Navigator.pop(context);
+                    _sendNudge(member['uid'], member['username']);
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+              _buildBottomSheetButton(
+                title: 'GRUPTAN ÇIKAR',
+                icon: Icons.person_remove_rounded,
+                color: AppColors.error,
+                textColor: Colors.white,
+                isDarkMode: isDarkMode,
+                onTap: () {
+                  Navigator.pop(context);
+                  _removeMember(member['uid'], member['username']);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _searchUserByPhone(StateSetter setModalState) async {
@@ -1479,15 +1612,18 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
                 (member) => Column(
                   children: [
                     _buildTeamMemberRow(
-                      member['isMe'] ? 'SEN' : member['username'],
+                      member['username'],
                       member['isAwake'],
                       isDarkMode,
-                      isAdminRow:
-                          member['uid'] == _activeUid, // Simplify for UI
+                      isActive: member['isActive'] ?? false,
+                      isAdminRow: member['isCreator'] ?? false,
                       status: member['status'],
-                      onKick: (_isAdmin && !member['isMe'])
-                          ? () =>
-                                _removeMember(member['uid'], member['username'])
+                      onTap: (_isAdmin && !member['isMe'])
+                          ? () => _showMemberActionsBottomSheet(
+                              context,
+                              isDarkMode,
+                              member,
+                            )
                           : null,
                     ),
                     if (member != _members.last)
@@ -1825,62 +1961,116 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     String name,
     bool isAwake,
     bool isDarkMode, {
+    bool isActive = false,
     bool isAdminRow = false,
     String status = 'JOINED',
-    VoidCallback? onKick,
+    VoidCallback? onTap,
+    VoidCallback? onLongPress,
   }) {
     final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
     final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
     final titleColor = isDarkMode
         ? AppColors.textDarkPrimary
         : AppColors.textPrimary;
+    final subTitleColor = isDarkMode
+        ? AppColors.textDarkSecondary
+        : AppColors.textSecondary;
 
     return GestureDetector(
-      onTap: onKick,
+      onTap: onTap,
+      onLongPress: onLongPress,
       behavior: HitTestBehavior.opaque,
       child: Row(
         children: [
-          Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: status == 'PENDING'
-                  ? Colors.grey
-                  : (isAwake ? Colors.greenAccent : AppColors.error),
-              shape: BoxShape.circle,
-              border: Border.all(color: borderColor, width: 2),
-              boxShadow: [
-                BoxShadow(color: shadowColor, offset: const Offset(2, 2)),
-              ],
-            ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: status == 'PENDING'
+                      ? Colors.grey.withValues(alpha: 0.5)
+                      : (isAwake ? Colors.greenAccent : AppColors.error),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: borderColor, width: 2),
+                  boxShadow: [
+                    BoxShadow(color: shadowColor, offset: const Offset(2, 2)),
+                  ],
+                ),
+                child: Center(
+                  child: Icon(
+                    status == 'PENDING'
+                        ? Icons.hourglass_empty_rounded
+                        : (isAwake
+                              ? Icons.check_rounded
+                              : Icons.bedtime_rounded),
+                    size: 16,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              if (status == 'JOINED')
+                Positioned(
+                  right: -2,
+                  bottom: -2,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: isActive ? Colors.yellowAccent : Colors.grey,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: borderColor, width: 1.5),
+                    ),
+                    child: Icon(
+                      isActive ? Icons.alarm_on : Icons.alarm_off,
+                      size: 10,
+                      color: Colors.black,
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(width: 16),
           Expanded(
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: titleColor,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: titleColor,
+                      ),
+                    ),
+                    if (isAdminRow) ...[
+                      const SizedBox(width: 8),
+                      const Icon(
+                        Icons.workspace_premium_rounded,
+                        color: Colors.orange,
+                        size: 20,
+                      ),
+                    ],
+                  ],
                 ),
-                if (isAdminRow) ...[
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.workspace_premium_rounded,
-                    color: Colors.orange,
-                    size: 20,
+                if (status == 'JOINED')
+                  Text(
+                    isActive ? 'ALARM KURULU' : 'ALARM KAPALI',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: isActive ? Colors.green : subTitleColor,
+                    ),
                   ),
-                ],
               ],
             ),
           ),
           Text(
             status == 'PENDING'
-                ? 'Bekleniyor'
-                : (isAwake ? 'Ayakta' : 'Uyuyor'),
+                ? 'BEKLENİYOR'
+                : (isAwake ? 'AYAKTA' : 'UYUYOR'),
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w900,

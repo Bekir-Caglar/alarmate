@@ -159,6 +159,13 @@ class DataRepository {
             .timeout(const Duration(seconds: 3));
         if (snap.exists && snap.value is Map) {
           final data = Map<String, dynamic>.from(snap.value as Map);
+
+          // Preserve local isActive state if it exists
+          final local = await _localDb.getById('alarms', id);
+          if (local != null && local.containsKey('isActive')) {
+            data['isActive'] = local['isActive'];
+          }
+
           await _localDb.save('alarms', id, data);
         }
       } catch (e) {
@@ -192,9 +199,18 @@ class DataRepository {
     // Yeni alarmlar için individual onValue dinleyici ekle, anında SQLite'ı modifiye etsin
     for (var id in alarmIds) {
       if (!_alarmSubs.containsKey(id)) {
-        _alarmSubs[id] = _db.child('alarms').child(id).onValue.listen((event) {
+        _alarmSubs[id] = _db.child('alarms').child(id).onValue.listen((
+          event,
+        ) async {
           if (event.snapshot.exists && event.snapshot.value is Map) {
             final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+
+            // Preserve local isActive state if it exists
+            final local = await _localDb.getById('alarms', id);
+            if (local != null && local.containsKey('isActive')) {
+              data['isActive'] = local['isActive'];
+            }
+
             _localDb.save('alarms', id, data);
           } else {
             _localDb.delete('alarms', id);

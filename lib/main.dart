@@ -56,13 +56,28 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       body: '$updatedBy, "$groupName" alarmını $newTime olarak güncelledi.',
       payload: message.data['alarmId'],
     );
+  } else if (message.data['type'] == 'alarm_nudge') {
+    final nudgedBy = message.data['nudgedBy'] ?? 'Biri';
+    final groupName = message.data['groupName'] ?? 'Alarm';
+
+    await NotificationService.showNotification(
+      id: message.hashCode,
+      title: '💨 ALARMINI AÇ!',
+      body:
+          '$nudgedBy, "$groupName" odasındaki alarmını açman için seni dürttü!',
+      payload: message.data['alarmId'],
+    );
   }
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  FirebaseDatabase.instance.setPersistenceEnabled(true);
+  try {
+    FirebaseDatabase.instance.setPersistenceEnabled(true);
+  } catch (e) {
+    debugPrint('[DB] Persistence already enabled or failed: $e');
+  }
   await Alarm.init();
 
   // FCM arka plan handler'ını kaydet
@@ -117,6 +132,17 @@ void _setupFCM() async {
         body: '$updatedBy, "$groupName" alarmını $newTime olarak güncelledi.',
         payload: message.data['alarmId'],
       );
+    } else if (message.data['type'] == 'alarm_nudge') {
+      final nudgedBy = message.data['nudgedBy'] ?? 'Biri';
+      final groupName = message.data['groupName'] ?? 'Alarm';
+
+      NotificationService.showNotification(
+        id: message.hashCode,
+        title: '💨 ALARMINI AÇ!',
+        body:
+            '$nudgedBy, "$groupName" odasındaki alarmını açman için seni dürttü!',
+        payload: message.data['alarmId'],
+      );
     }
   });
 
@@ -133,6 +159,15 @@ void _setupFCM() async {
           ),
         );
       }
+    } else if (message.data['type'] == 'alarm_nudge') {
+      final alarmId = message.data['alarmId'];
+      if (alarmId != null) {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => AlarmDetailScreen(alarmId: alarmId),
+          ),
+        );
+      }
     }
   });
 
@@ -142,6 +177,17 @@ void _setupFCM() async {
     final alarmId = initialMessage.data['alarmId'];
     if (alarmId != null) {
       // Navigator hazır olana kadar bekle
+      await Future.delayed(const Duration(milliseconds: 2500));
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (context) => AlarmDetailScreen(alarmId: alarmId),
+        ),
+      );
+    }
+  } else if (initialMessage != null &&
+      initialMessage.data['type'] == 'alarm_nudge') {
+    final alarmId = initialMessage.data['alarmId'];
+    if (alarmId != null) {
       await Future.delayed(const Duration(milliseconds: 2500));
       navigatorKey.currentState?.push(
         MaterialPageRoute(

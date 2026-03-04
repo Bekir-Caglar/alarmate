@@ -7,6 +7,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../components/primary_button.dart';
 import '../../components/brutalist_icon_button.dart';
 import '../../../core/services/alarm_sync_service.dart';
+import '../../../core/database/local_db.dart';
 
 class InvitationScreen extends StatefulWidget {
   final String alarmId;
@@ -48,11 +49,14 @@ class _InvitationScreenState extends State<InvitationScreen> {
     try {
       final db = FirebaseDatabase.instance.ref();
 
-      // 1. Alarma kendini ekle ve alarmı aktif yap
+      // 1. Alarma kendini ekle
       await db.child('alarms').child(widget.alarmId).update({
         'members/${user.uid}': true,
-        'isActive': true,
+        'memberActiveStatuses/${user.uid}': true,
       });
+
+      // 1a. Yerelde alarmı aktif yap (Bireysel durum)
+      await LocalDb.instance.save('alarms', widget.alarmId, {'isActive': true});
 
       // 1b. Davet listesinden sil (alarm altındaki)
       await db

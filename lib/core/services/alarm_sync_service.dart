@@ -28,11 +28,18 @@ class AlarmSyncService {
 
         if (memberships.exists && memberships.value is Map) {
           final alarmIds = (memberships.value as Map).keys;
-          final updates = <String, dynamic>{};
           for (var id in alarmIds) {
-            updates['alarms/$id/isActive'] = active;
+            String alarmId = id.toString();
+            await LocalAlarmService.updateAlarm(alarmId, {'isActive': active});
+
+            // Report to Firebase individually
+            await db
+                .child('alarms')
+                .child(alarmId)
+                .child('memberActiveStatuses')
+                .child(user.uid)
+                .set(active);
           }
-          await db.update(updates).timeout(const Duration(seconds: 3));
         }
       } catch (e) {
         // Timeout or Network Error (Offline mode) -> Edit Local Alarms Instead to prevent freeze
@@ -87,6 +94,16 @@ class AlarmSyncService {
             if (alarmSnap.exists) {
               final data = Map<String, dynamic>.from(alarmSnap.value as Map);
               data['id'] = id.toString();
+
+              // Preserve local isActive state if it exists
+              final local = await LocalDb.instance.getById(
+                'alarms',
+                id.toString(),
+              );
+              if (local != null && local.containsKey('isActive')) {
+                data['isActive'] = local['isActive'];
+              }
+
               alarmsList.add(data);
             }
           }

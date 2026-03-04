@@ -515,51 +515,58 @@ class _HomeScreenState extends State<HomeScreen> {
                                             onToggle: () async {
                                               final bool newActive =
                                                   !(alarm['isActive'] ?? true);
-                                              if (_isAnonymous) {
-                                                await LocalAlarmService.updateAlarm(
-                                                  alarm['id'],
-                                                  {'isActive': newActive},
-                                                );
-                                              } else {
-                                                // Update UI locally first for instant feedback
-                                                setState(() {
-                                                  final index = _alarms
-                                                      .indexWhere(
-                                                        (a) =>
-                                                            a['id'] ==
-                                                            alarm['id'],
-                                                      );
-                                                  if (index != -1) {
-                                                    _alarms[index]['isActive'] =
-                                                        newActive;
-                                                  }
-                                                });
 
-                                                // Update local cache immediately for offline reliability
-                                                final current = await LocalDb
-                                                    .instance
-                                                    .getById(
-                                                      'alarms',
-                                                      alarm['id'],
+                                              await LocalAlarmService.updateAlarm(
+                                                alarm['id'],
+                                                {'isActive': newActive},
+                                              );
+                                              // Update UI locally first for instant feedback
+                                              setState(() {
+                                                final index = _alarms
+                                                    .indexWhere(
+                                                      (a) =>
+                                                          a['id'] ==
+                                                          alarm['id'],
                                                     );
-                                                if (current != null) {
-                                                  await LocalDb.instance.save(
+                                                if (index != -1) {
+                                                  _alarms[index]['isActive'] =
+                                                      newActive;
+                                                }
+                                              });
+
+                                              // Update local cache immediately for offline reliability
+                                              final current = await LocalDb
+                                                  .instance
+                                                  .getById(
                                                     'alarms',
                                                     alarm['id'],
-                                                    {
-                                                      ...current,
-                                                      'isActive': newActive,
-                                                    },
                                                   );
-                                                }
+                                              if (current != null) {
+                                                await LocalDb.instance.save(
+                                                  'alarms',
+                                                  alarm['id'],
+                                                  {
+                                                    ...current,
+                                                    'isActive': newActive,
+                                                  },
+                                                );
+                                              }
 
+                                              // Report individual status to Firebase for others to see in team status
+                                              final user = FirebaseAuth
+                                                  .instance
+                                                  .currentUser;
+                                              if (user != null &&
+                                                  !user.isAnonymous) {
                                                 await FirebaseDatabase.instance
                                                     .ref()
                                                     .child('alarms')
                                                     .child(alarm['id'])
-                                                    .update({
-                                                      'isActive': newActive,
-                                                    });
+                                                    .child(
+                                                      'memberActiveStatuses',
+                                                    )
+                                                    .child(user.uid)
+                                                    .set(newActive);
                                               }
 
                                               // Sync with hardware alarm package

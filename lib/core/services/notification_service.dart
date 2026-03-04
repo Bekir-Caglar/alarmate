@@ -1,5 +1,6 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:ui';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
@@ -40,16 +41,22 @@ class NotificationService {
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
           'alarm_updates',
-          'Alarm Güncellemeleri',
-          channelDescription: 'Alarm değişiklikleri hakkında bilgilendirme',
+          'Alar Mate Bildirimleri',
+          channelDescription: 'Alarm ve dürtme bildirimleri',
           importance: Importance.max,
           priority: Priority.high,
           showWhen: true,
+          styleInformation: BigTextStyleInformation(''),
+          color: Color(0xFF6200EE),
         );
 
     const NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
-      iOS: DarwinNotificationDetails(),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
     );
 
     await _notificationsPlugin.show(
