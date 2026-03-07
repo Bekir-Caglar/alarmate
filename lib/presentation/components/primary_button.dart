@@ -8,6 +8,7 @@ class PrimaryButton extends StatefulWidget {
   final bool isLoading;
   final double? width;
   final IconData? icon;
+  final String? imageIcon;
   final Color? color;
 
   const PrimaryButton({
@@ -17,6 +18,7 @@ class PrimaryButton extends StatefulWidget {
     this.isLoading = false,
     this.width = double.infinity,
     this.icon,
+    this.imageIcon,
     this.color,
   });
 
@@ -114,7 +116,14 @@ class _PrimaryButtonState extends State<PrimaryButton> {
                       : Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            if (widget.icon != null) ...[
+                            if (widget.imageIcon != null) ...[
+                              Image.asset(
+                                widget.imageIcon!,
+                                width: 22,
+                                height: 22,
+                              ),
+                              const SizedBox(width: 8),
+                            ] else if (widget.icon != null) ...[
                               Icon(
                                 widget.icon,
                                 color: _foregroundColor,

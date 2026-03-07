@@ -2,14 +2,27 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 
 class BrutalistIconButton extends StatefulWidget {
-  final IconData icon;
+  final IconData? icon;
+  final String? text;
+  final Color? backgroundColor;
+  final Color? contentColor;
   final VoidCallback onTap;
+  final bool isToggled;
+  final double? buttonSize;
 
   const BrutalistIconButton({
     super.key,
-    required this.icon,
+    this.icon,
+    this.text,
+    this.backgroundColor,
+    this.contentColor,
+    this.isToggled = false,
+    this.buttonSize,
     required this.onTap,
-  });
+  }) : assert(
+         icon != null || text != null,
+         'Either icon or text must be provided',
+       );
 
   @override
   State<BrutalistIconButton> createState() => _BrutalistIconButtonState();
@@ -23,17 +36,25 @@ class _BrutalistIconButtonState extends State<BrutalistIconButton> {
     bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
     final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
-    final bgColor = isDarkMode ? AppColors.surfaceDark : Colors.white;
-    final iconColor = isDarkMode ? AppColors.textDarkPrimary : AppColors.textPrimary;
+    final bgColor =
+        widget.backgroundColor ??
+        (isDarkMode ? AppColors.surfaceDark : Colors.white);
+    final fgColor =
+        widget.contentColor ??
+        (isDarkMode ? AppColors.textDarkPrimary : AppColors.textPrimary);
 
     const double shadowOffset = 4.0;
-    const double buttonSize = 44.0;
+    final double buttonSize = widget.buttonSize ?? 44.0;
+
+    final bool effectivePressed = _isPressed || widget.isToggled;
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTapDown: (_) => setState(() => _isPressed = true),
-      onTapUp: (_) {
-        setState(() => _isPressed = false);
+      onTapUp: (_) async {
         widget.onTap();
+        await Future.delayed(const Duration(milliseconds: 50));
+        if (mounted) setState(() => _isPressed = false);
       },
       onTapCancel: () => setState(() => _isPressed = false),
       child: SizedBox(
@@ -58,10 +79,10 @@ class _BrutalistIconButtonState extends State<BrutalistIconButton> {
             AnimatedPositioned(
               duration: const Duration(milliseconds: 100),
               curve: Curves.fastOutSlowIn,
-              top: _isPressed ? shadowOffset : 0,
-              left: _isPressed ? shadowOffset : 0,
-              right: _isPressed ? 0 : shadowOffset,
-              bottom: _isPressed ? 0 : shadowOffset,
+              top: effectivePressed ? shadowOffset : 0,
+              left: effectivePressed ? shadowOffset : 0,
+              right: effectivePressed ? 0 : shadowOffset,
+              bottom: effectivePressed ? 0 : shadowOffset,
               child: Container(
                 decoration: BoxDecoration(
                   color: bgColor,
@@ -69,7 +90,16 @@ class _BrutalistIconButtonState extends State<BrutalistIconButton> {
                   border: Border.all(color: borderColor, width: 3),
                 ),
                 child: Center(
-                  child: Icon(widget.icon, color: iconColor),
+                  child: widget.text != null
+                      ? Text(
+                          widget.text!,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: fgColor,
+                          ),
+                        )
+                      : Icon(widget.icon, color: fgColor),
                 ),
               ),
             ),

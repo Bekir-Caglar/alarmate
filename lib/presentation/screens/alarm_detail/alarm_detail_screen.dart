@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
+import 'package:flutter_multi_formatter/flutter_multi_formatter.dart';
+import '../../components/brutalist_phone_input.dart';
+
 import '../../../core/services/alarm_sync_service.dart';
 import '../../../core/services/local_alarm_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../components/primary_button.dart';
 import '../../components/brutalist_icon_button.dart';
 import '../../components/retro_mission_picker.dart';
+import '../../components/brutalist_day_chip.dart';
 import '../../../data/repositories/data_repository.dart';
 import '../../../core/database/local_db.dart';
 import '../../../main.dart';
@@ -46,22 +50,19 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
   Map<String, dynamic>? _pendingUpdateData;
   List<int> _selectedDays = [];
 
-  final List<String> _dayNames = [
-    'PZT',
-    'SAL',
-    'ÇAR',
-    'PER',
-    'CUM',
-    'CMT',
-    'PAZ',
-  ];
+  final List<String> _dayNames = ['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz'];
 
   FixedExtentScrollController? _hourController;
   FixedExtentScrollController? _minuteController;
   FixedExtentScrollController? _amPmController;
   Timer? _debounceTimer;
   final TextEditingController _memberPhoneController = TextEditingController();
+  final TextEditingController _nicknameController = TextEditingController();
   bool _isSearchingMember = false;
+  List<Map<String, dynamic>> _nicknameSearchResults = [];
+  PhoneCountryData _country = PhoneCodes.getPhoneCountryDataByCountryCode(
+    'TR',
+  )!;
 
   @override
   void initState() {
@@ -190,6 +191,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     _minuteController?.dispose();
     _amPmController?.dispose();
     _memberPhoneController.dispose();
+    _nicknameController.dispose();
     super.dispose();
   }
 
@@ -683,6 +685,122 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     );
   }
 
+  void _onNicknameChanged(String val, StateSetter setModalState) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      if (val.length >= 3) {
+        _performNicknameSearch(val, setModalState);
+      } else {
+        setModalState(() {
+          _nicknameSearchResults = [];
+        });
+      }
+    });
+  }
+
+  Future<void> _performNicknameSearch(
+    String q,
+    StateSetter setModalState,
+  ) async {
+    final query = q.toUpperCase().trim();
+    try {
+      final db = FirebaseDatabase.instance.ref();
+      // Username'ler genelde büyük harf tutuluyor olabilir veya indexli olabilir.
+      // Firebase'de startAt/endAt ile prefix search yapabiliriz.
+      final snapshot = await db
+          .child('users')
+          .orderByChild('username')
+          .startAt(query)
+          .endAt('$query\uf8ff')
+          .limitToFirst(10)
+          .once();
+
+      List<Map<String, dynamic>> results = [];
+      if (snapshot.snapshot.exists) {
+        final data = snapshot.snapshot.value as Map;
+        data.forEach((uid, info) {
+          if (uid != _activeUid) {
+            results.add({
+              'uid': uid,
+              'username': info['username'] ?? 'BİLİNMEYEN',
+              'phone': info['phone'] ?? '',
+            });
+          }
+        });
+      }
+
+      if (mounted) {
+        setModalState(() {
+          _nicknameSearchResults = results;
+        });
+      }
+    } catch (e) {
+      debugPrint('Nickname search error: $e');
+    }
+  }
+
+  Future<void> _sendInvite(String invitedUid, String username) async {
+    final db = FirebaseDatabase.instance.ref();
+
+    // Check if already a member or already invited
+    bool alreadyIn = _members.any((m) => m['uid'] == invitedUid);
+    if (alreadyIn) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('BU KULLANICI ZATEN GRUPTA VEYA DAVET EDİLMİŞ!'),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      String inviterName = 'BİR ARKADAŞIN';
+      final currentUserData = await DataRepository.instance.getUserOnce(
+        _activeUid!,
+      );
+      if (currentUserData != null && currentUserData['username'] != null) {
+        inviterName = currentUserData['username'];
+      }
+
+      final inviteData = {
+        'groupName': _groupName,
+        'inviterName': inviterName,
+        'time': _currentTime,
+        'ampm': _currentAmPm,
+        'mission': _currentMission,
+        'difficulty': _currentDifficulty,
+        'days': _selectedDays,
+        'timestamp': ServerValue.timestamp,
+      };
+
+      await db
+          .child('invitations')
+          .child(invitedUid)
+          .child(widget.alarmId)
+          .set(inviteData);
+      await db
+          .child('alarms')
+          .child(widget.alarmId)
+          .child('invitedMembers')
+          .child(invitedUid)
+          .set(username);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('DAVET GÖNDERİLDİ!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      debugPrint('Invite error: $e');
+    }
+  }
+
   Future<void> _searchUserByPhone(StateSetter setModalState) async {
     String phone = _memberPhoneController.text.trim().replaceAll(
       RegExp(r'\s+'),
@@ -690,7 +808,9 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     );
     if (phone.isEmpty) return;
 
-    String searchPhone = phone.startsWith('+') ? phone : '+90$phone';
+    String dial = _country.phoneCode ?? '90';
+    String searchPhone = '+$dial$phone';
+    if (phone.startsWith('+')) searchPhone = phone;
 
     setModalState(() => _isSearchingMember = true);
 
@@ -704,70 +824,10 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
 
       if (snapshot.snapshot.exists) {
         final userData = (snapshot.snapshot.value as Map).entries.first;
-        final invitedUid = userData.key;
-        final info = Map<String, dynamic>.from(userData.value as Map);
-        final username = info['username'] ?? 'BİLİNMEYEN';
-
-        // Check if already a member or already invited
-        bool alreadyIn = _members.any((m) => m['uid'] == invitedUid);
-
-        if (alreadyIn) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('BU KULLANICI ZATEN GRUPTA VEYA DAVET EDİLMİŞ!'),
-              ),
-            );
-          }
-        } else {
-          // Send Invitation
-          String inviterName = 'BİR ARKADAŞIN';
-          final currentUserData = await DataRepository.instance.getUserOnce(
-            _activeUid!,
-          );
-          if (currentUserData != null && currentUserData['username'] != null) {
-            inviterName = currentUserData['username'];
-          }
-
-          final inviteData = {
-            'groupName': _groupName,
-            'inviterName': inviterName,
-            'time': _currentTime,
-            'ampm': _currentAmPm,
-            'mission': _currentMission,
-            'difficulty': _currentDifficulty,
-            'days': _selectedDays,
-            'timestamp': ServerValue.timestamp,
-          };
-
-          // 1. Send invite to user's invitations node
-          await db
-              .child('invitations')
-              .child(invitedUid)
-              .child(widget.alarmId)
-              .set(inviteData);
-
-          // 2. Add to alarm's invitedMembers list
-          await db
-              .child('alarms')
-              .child(widget.alarmId)
-              .child('invitedMembers')
-              .child(invitedUid)
-              .set(username);
-
-          _memberPhoneController.clear();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('DAVET GÖNDERİLDİ!'),
-                backgroundColor: Colors.green,
-              ),
-            );
-            Navigator.pop(
-              context,
-            ); // Close bottom sheet after successful invite
-          }
-        }
+        await _sendInvite(
+          userData.key,
+          userData.value['username'] ?? 'BİLİNMEYEN',
+        );
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -778,6 +838,34 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     } finally {
       if (mounted) setModalState(() => _isSearchingMember = false);
     }
+  }
+
+  String _flag(String countryCode) {
+    return countryCode.toUpperCase().replaceAllMapped(
+      RegExp(r'[A-Z]'),
+      (match) => String.fromCharCode(match.group(0)!.codeUnitAt(0) + 127397),
+    );
+  }
+
+  void _openCountrySheet(bool isDarkMode, StateSetter setModalState) {
+    final all = PhoneCodes.getAllCountryDatas();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => CountrySelectorSheet(
+        countries: all,
+        selectedCode: _country.countryCode ?? '',
+        isDarkMode: isDarkMode,
+        flagBuilder: _flag,
+        onSelect: (c) {
+          setModalState(() {
+            _country = c;
+            _memberPhoneController.clear();
+          });
+        },
+      ),
+    );
   }
 
   Future<bool> _showExitConfirmation() async {
@@ -1350,8 +1438,33 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
     final titleColor = isDarkMode
         ? AppColors.textDarkPrimary
         : AppColors.textPrimary;
-    final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
-    final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
+
+    final dayWidgets = List.generate(7, (index) {
+      final dayIndex = index + 1;
+      final isSelected = _selectedDays.contains(dayIndex);
+
+      return Opacity(
+        opacity: _isAdmin ? 1.0 : 0.6,
+        child: BrutalistDayChip(
+          text: _dayNames[index],
+          isSelected: isSelected,
+          isDarkMode: isDarkMode,
+          isDisabled: !_isAdmin,
+          onTap: () {
+            if (!_isAdmin) return;
+            setState(() {
+              if (isSelected) {
+                _selectedDays.remove(dayIndex);
+              } else {
+                _selectedDays.add(dayIndex);
+                _selectedDays.sort();
+              }
+              _isModified = true;
+            });
+          },
+        ),
+      );
+    });
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1368,62 +1481,7 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(7, (index) {
-            final dayIndex = index + 1;
-            final isSelected = _selectedDays.contains(dayIndex);
-
-            return GestureDetector(
-              onTap: _isAdmin
-                  ? () {
-                      setState(() {
-                        if (isSelected) {
-                          _selectedDays.remove(dayIndex);
-                        } else {
-                          _selectedDays.add(dayIndex);
-                          _selectedDays.sort();
-                        }
-                        _isModified = true;
-                      });
-                    }
-                  : null,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? AppColors.primary
-                      : (isDarkMode ? AppColors.surfaceDark : Colors.white),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: borderColor, width: 3),
-                  boxShadow: isSelected
-                      ? null
-                      : [
-                          BoxShadow(
-                            color: (index == 5 || index == 6)
-                                ? Colors.pinkAccent
-                                : shadowColor,
-                            offset: const Offset(3, 3),
-                          ),
-                        ],
-                ),
-                child: Center(
-                  child: Text(
-                    _dayNames[index],
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      color: isSelected
-                          ? Colors.white
-                          : (isDarkMode
-                                ? AppColors.textDarkPrimary
-                                : AppColors.textPrimary),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
+          children: dayWidgets,
         ),
       ],
     );
@@ -1820,141 +1878,253 @@ class _AlarmDetailScreenState extends State<AlarmDetailScreen> {
         ? AppColors.textDarkPrimary
         : AppColors.textPrimary;
 
+    bool isNicknameMode = false;
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(24),
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
               ),
-              border: Border.all(color: borderColor, width: 3),
-            ),
-            child: SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.symmetric(horizontal: 100),
-                    decoration: BoxDecoration(
-                      color: shadowColor.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Yeni Üye Ekle',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                      color: titleColor,
-                      letterSpacing: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  StatefulBuilder(
-                    builder: (context, setModalState) {
-                      return Column(
+                  border: Border.all(color: borderColor, width: 3),
+                ),
+                child: SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 4,
+                        margin: const EdgeInsets.symmetric(horizontal: 100),
+                        decoration: BoxDecoration(
+                          color: shadowColor.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Yeni Üye Ekle',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: titleColor,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Mode Selector
+                      Row(
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: isDarkMode
-                                        ? AppColors.surfaceDark
-                                        : Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: borderColor,
-                                      width: 3,
-                                    ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () =>
+                                  setModalState(() => isNicknameMode = false),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: !isNicknameMode
+                                      ? AppColors.primary
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: borderColor,
+                                    width: 2,
                                   ),
-                                  child: TextField(
-                                    controller: _memberPhoneController,
-                                    keyboardType: TextInputType.phone,
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    'NUMARA',
                                     style: TextStyle(
-                                      height: 1.0,
-                                      color: isDarkMode
+                                      fontWeight: FontWeight.w900,
+                                      color: !isNicknameMode
                                           ? Colors.white
-                                          : Colors.black,
-                                    ),
-                                    decoration: const InputDecoration(
-                                      hintText: '5XX XXX XX XX',
-                                      border: InputBorder.none,
-                                      contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                      ),
+                                          : titleColor,
                                     ),
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: _isSearchingMember
-                                    ? null
-                                    : () => _searchUserByPhone(setModalState),
-                                child: Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primary,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: borderColor,
-                                      width: 3,
-                                    ),
-                                  ),
-                                  child: _isSearchingMember
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.person_add_rounded,
-                                          color: Colors.white,
-                                        ),
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
-                          const SizedBox(height: 12),
-                          const Opacity(
-                            opacity: 0.6,
-                            child: Text(
-                              'Arkadaşını telefon numarasıyla ara ve davet et.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () =>
+                                  setModalState(() => isNicknameMode = true),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isNicknameMode
+                                      ? AppColors.primary
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: borderColor,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    'NICKNAME',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      color: isNicknameMode
+                                          ? Colors.white
+                                          : titleColor,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                      const SizedBox(height: 24),
+
+                      if (!isNicknameMode) ...[
+                        BrutalistPhoneInput(
+                          controller: _memberPhoneController,
+                          isDarkMode: isDarkMode,
+                          isSmsMode: false,
+                          flagEmoji: _flag(_country.countryCode ?? ''),
+                          dialCode: '+${_country.phoneCode ?? ""}',
+                          onCountryTap: () =>
+                              _openCountrySheet(isDarkMode, setModalState),
+                        ),
+                        const SizedBox(height: 128),
+                        PrimaryButton(
+                          text: _isSearchingMember ? 'ARANIYOR...' : 'DAVET ET',
+                          onPressed: _isSearchingMember
+                              ? () {}
+                              : () => _searchUserByPhone(setModalState),
+                        ),
+                      ] else ...[
+                        // Nickname search input
+                        Container(
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: isDarkMode
+                                ? AppColors.surfaceDark
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: borderColor, width: 3),
+                          ),
+                          child: TextField(
+                            controller: _nicknameController,
+                            textAlignVertical: TextAlignVertical.center,
+                            onChanged: (val) =>
+                                _onNicknameChanged(val, setModalState),
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              color: titleColor,
+                              letterSpacing: 2,
+                            ),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              hintText: 'ARA...',
+                              hintStyle: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: titleColor.withOpacity(0.3),
+                              ),
+                              prefixIcon: Icon(
+                                Icons.search_rounded,
+                                color: titleColor,
+                                size: 28,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 18,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_nicknameSearchResults.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            constraints: const BoxConstraints(maxHeight: 200),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: borderColor, width: 2),
+                            ),
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: _nicknameSearchResults.length,
+                              separatorBuilder: (_, __) => Divider(
+                                color: borderColor.withOpacity(0.3),
+                                height: 1,
+                              ),
+                              itemBuilder: (context, index) {
+                                final user = _nicknameSearchResults[index];
+                                return ListTile(
+                                  onTap: () => _sendInvite(
+                                    user['uid'],
+                                    user['username'],
+                                  ),
+                                  leading: const CircleAvatar(
+                                    backgroundColor: AppColors.primaryLight,
+                                    child: Icon(
+                                      Icons.person,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    user['username'].toString().toUpperCase(),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  trailing: const Icon(
+                                    Icons.person_add_rounded,
+                                    color: AppColors.primary,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ],
+                      const SizedBox(height: 12),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
-    );
+    ).then((_) {
+      _memberPhoneController.clear();
+      _nicknameController.clear();
+      if (mounted) {
+        setState(() {
+          _nicknameSearchResults = [];
+          _isSearchingMember = false;
+        });
+      }
+    });
   }
 
   Widget _buildTeamMemberRow(

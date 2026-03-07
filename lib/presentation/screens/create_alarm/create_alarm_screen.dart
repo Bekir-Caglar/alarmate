@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'dart:async';
 import '../../../core/services/local_alarm_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/database/local_db.dart';
@@ -8,9 +9,12 @@ import '../../components/primary_button.dart';
 import '../../components/retro_progress_bar.dart';
 import '../../components/retro_time_picker.dart';
 import '../../components/brutalist_icon_button.dart';
+import 'package:flutter_multi_formatter/flutter_multi_formatter.dart';
 import '../../../core/services/alarm_sync_service.dart';
 import '../../../main.dart';
 import '../../../data/repositories/data_repository.dart';
+import '../../components/brutalist_phone_input.dart';
+import '../../components/brutalist_day_chip.dart';
 
 class CreateAlarmScreen extends StatefulWidget {
   final bool isAnonymous;
@@ -38,17 +42,20 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
   List<Map<String, dynamic>> _invitedMembers = [];
   bool _isSearching = false;
   late bool _isAnonymous;
+  String? _activeUid;
+
+  // Nickname Search
+  final TextEditingController _nicknameController = TextEditingController();
+  List<Map<String, dynamic>> _nicknameSearchResults = [];
+  bool _isNicknameMode = false;
+  Timer? _debounceTimer;
 
   List<int> _selectedDays = [];
-  final List<String> _dayNames = [
-    'PZT',
-    'SAL',
-    'ÇAR',
-    'PER',
-    'CUM',
-    'CMT',
-    'PAZ',
-  ];
+  PhoneCountryData _country = PhoneCodes.getPhoneCountryDataByCountryCode(
+    'TR',
+  )!;
+
+  final List<String> _dayNames = ['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz'];
 
   final List<String> _missions = [
     'MATEMATİK SINAVI',
@@ -77,6 +84,16 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
           CurvedAnimation(parent: _slideController, curve: Curves.easeInBack),
         );
     _isAnonymous = widget.isAnonymous;
+    _initActiveUid();
+  }
+
+  Future<void> _initActiveUid() async {
+    final uid = await LocalDb.instance.getActiveUid();
+    if (mounted) {
+      setState(() {
+        _activeUid = uid;
+      });
+    }
   }
 
   @override
@@ -84,6 +101,8 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
     _slideController.dispose();
     _nameController.dispose();
     _memberPhoneController.dispose();
+    _nicknameController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -138,9 +157,9 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
     final phone = _memberPhoneController.text.trim();
     if (phone.isEmpty) return;
 
-    // Google style prefixing (+90) if not present
+    // Remove spaces and format
     String rawPhone = phone.replaceAll(RegExp(r'\s+'), '');
-    String searchPhone = rawPhone.startsWith('+') ? rawPhone : '+90$rawPhone';
+    String searchPhone = '+${_country.phoneCode ?? ""}$rawPhone';
 
     setState(() => _isSearching = true);
 
@@ -159,10 +178,14 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
 
         // Already added?
         if (_invitedMembers.any((m) => m['uid'] == uid)) {
-          if (mounted)
+          if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('BU KULLANICI ZATEN EKLENMİŞ!')),
+              const SnackBar(
+                content: Text('BU KULLANICI ZATEN EKLENMİŞ!'),
+                backgroundColor: AppColors.error,
+              ),
             );
+          }
         } else {
           setState(() {
             _invitedMembers.add({
@@ -172,16 +195,129 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
             });
             _memberPhoneController.clear();
           });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('KULLANICI EKLENDİ!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
       } else {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('KULLANICI BULUNAMADI!')),
+            const SnackBar(
+              content: Text('KULLANICI BULUNAMADI!'),
+              backgroundColor: AppColors.error,
+            ),
           );
+        }
       }
     } finally {
       if (mounted) setState(() => _isSearching = false);
     }
+  }
+
+  void _onNicknameChanged(String val) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      if (val.length >= 3) {
+        _performNicknameSearch(val);
+      } else {
+        setState(() {
+          _nicknameSearchResults = [];
+        });
+      }
+    });
+  }
+
+  Future<void> _performNicknameSearch(String q) async {
+    final query = q.toUpperCase().trim();
+    setState(() => _isSearching = true);
+    try {
+      final db = FirebaseDatabase.instance.ref();
+      final snapshot = await db
+          .child('users')
+          .orderByChild('username')
+          .startAt(query)
+          .endAt('$query\uf8ff')
+          .limitToFirst(10)
+          .once();
+
+      List<Map<String, dynamic>> results = [];
+      if (snapshot.snapshot.exists) {
+        final data = snapshot.snapshot.value as Map;
+        data.forEach((uid, info) {
+          if (uid != _activeUid) {
+            results.add({
+              'uid': uid,
+              'username': info['username'] ?? 'BİLİNMEYEN',
+              'phone': info['phone'] ?? '',
+            });
+          }
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          _nicknameSearchResults = results;
+        });
+      }
+    } catch (e) {
+      debugPrint('Nickname search error: $e');
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  void _addMemberFromSearch(Map<String, dynamic> user) {
+    if (_invitedMembers.any((m) => m['uid'] == user['uid'])) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('BU KULLANICI ZATEN EKLENMİŞ!'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } else {
+      setState(() {
+        _invitedMembers.add(user);
+        _nicknameController.clear();
+        _nicknameSearchResults = [];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('KULLANICI EKLENDİ!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  String _flag(String countryCode) {
+    return countryCode.toUpperCase().replaceAllMapped(
+      RegExp(r'[A-Z]'),
+      (match) => String.fromCharCode(match.group(0)!.codeUnitAt(0) + 127397),
+    );
+  }
+
+  void _openCountrySheet(bool isDarkMode) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => CountrySelectorSheet(
+        countries: PhoneCodes.getAllCountryDatas(),
+        selectedCode: _country.countryCode ?? 'TR',
+        isDarkMode: isDarkMode,
+        flagBuilder: _flag,
+        onSelect: (c) {
+          setState(() {
+            _country = c;
+          });
+        },
+      ),
+    );
   }
 
   Future<void> _saveAlarm() async {
@@ -546,8 +682,27 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
     final titleColor = isDarkMode
         ? AppColors.textDarkPrimary
         : AppColors.textPrimary;
-    final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
-    final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
+
+    final dayWidgets = List.generate(7, (index) {
+      final dayIndex = index + 1;
+      final isSelected = _selectedDays.contains(dayIndex);
+
+      return BrutalistDayChip(
+        text: _dayNames[index],
+        isSelected: isSelected,
+        isDarkMode: isDarkMode,
+        onTap: () {
+          setState(() {
+            if (isSelected) {
+              _selectedDays.remove(dayIndex);
+            } else {
+              _selectedDays.add(dayIndex);
+              _selectedDays.sort();
+            }
+          });
+        },
+      );
+    });
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -564,62 +719,7 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
         const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(7, (index) {
-            final dayIndex = index + 1;
-            final isSelected = _selectedDays.contains(dayIndex);
-
-            return GestureDetector(
-              onTap: () {
-                setState(() {
-                  if (isSelected) {
-                    _selectedDays.remove(dayIndex);
-                  } else {
-                    _selectedDays.add(dayIndex);
-                    _selectedDays.sort();
-                  }
-                });
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? AppColors.primary
-                      : (isDarkMode ? AppColors.surfaceDark : Colors.white),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: borderColor,
-                    width: isSelected ? 3 : 2,
-                  ),
-                  boxShadow: isSelected
-                      ? null
-                      : [
-                          BoxShadow(
-                            color: (index == 5 || index == 6)
-                                ? Colors.pinkAccent
-                                : shadowColor,
-                            offset: const Offset(2, 2),
-                          ),
-                        ],
-                ),
-                child: Center(
-                  child: Text(
-                    _dayNames[index],
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      color: isSelected
-                          ? Colors.white
-                          : (isDarkMode
-                                ? AppColors.textDarkPrimary
-                                : AppColors.textPrimary),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
+          children: dayWidgets,
         ),
       ],
     );
@@ -824,116 +924,250 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
   }
 
   Widget _buildStep5Invite(bool isDarkMode) {
-    final shadowColor = isDarkMode ? AppColors.shadowDark : AppColors.shadow;
     final borderColor = isDarkMode ? AppColors.borderDark : AppColors.border;
+    final titleColor = isDarkMode
+        ? AppColors.textDarkPrimary
+        : AppColors.textPrimary;
 
     return _buildBrutalistCard(
-      title: 'TAKIMINI KUR',
-      description: 'Arkadaşlarını telefon numarasıyla ara ve ekle.',
+      title: 'ARKADAŞLARINI EKLE',
+      description: '',
       isDarkMode: isDarkMode,
       child: Column(
         children: [
+          // Mode Selector
           Row(
             children: [
               Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isDarkMode ? AppColors.surfaceDark : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: borderColor, width: 3),
-                  ),
-                  child: TextField(
-                    controller: _memberPhoneController,
-                    keyboardType: TextInputType.phone,
-                    style: TextStyle(
-                      height: 1.0,
-                      color: isDarkMode ? Colors.white : Colors.black,
+                child: GestureDetector(
+                  onTap: () => setState(() => _isNicknameMode = false),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: !_isNicknameMode
+                          ? AppColors.primary
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: borderColor, width: 2),
                     ),
-                    decoration: const InputDecoration(
-                      hintText: '5XX XXX XX XX',
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Center(
+                      child: Text(
+                        'NUMARA',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: !_isNicknameMode ? Colors.white : titleColor,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: _isSearching ? null : _searchUserByPhone,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: borderColor, width: 3),
-                  ),
-                  child: _isSearching
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(
-                          Icons.person_add_rounded,
-                          color: Colors.white,
+              const SizedBox(width: 12),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _isNicknameMode = true),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _isNicknameMode
+                          ? AppColors.primary
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: borderColor, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'NICKNAME',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: _isNicknameMode ? Colors.white : titleColor,
                         ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 24),
+
+          if (!_isNicknameMode) ...[
+            BrutalistPhoneInput(
+              controller: _memberPhoneController,
+              isDarkMode: isDarkMode,
+              isSmsMode: false,
+              flagEmoji: _flag(_country.countryCode ?? ''),
+              dialCode: '+${_country.phoneCode ?? ""}',
+              onCountryTap: () => _openCountrySheet(isDarkMode),
+            ),
+            const SizedBox(height: 24),
+            PrimaryButton(
+              text: _isSearching ? 'ARANIYOR...' : 'DAVET ET',
+              onPressed: _isSearching ? () {} : _searchUserByPhone,
+            ),
+          ] else ...[
+            // Nickname search input
+            Container(
+              height: 64,
+              decoration: BoxDecoration(
+                color: isDarkMode ? AppColors.surfaceDark : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: borderColor, width: 3),
+              ),
+              child: TextField(
+                controller: _nicknameController,
+                textAlignVertical: TextAlignVertical.center,
+                onChanged: _onNicknameChanged,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: titleColor,
+                  letterSpacing: 2,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'ARA...',
+                  hintStyle: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: titleColor.withOpacity(0.3),
+                  ),
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    color: titleColor,
+                    size: 28,
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 18,
+                  ),
+                ),
+              ),
+            ),
+            if (_nicknameSearchResults.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 120),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor, width: 2),
+                ),
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    children: _nicknameSearchResults.map((user) {
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ListTile(
+                            onTap: () => _addMemberFromSearch(user),
+                            leading: const CircleAvatar(
+                              backgroundColor: AppColors.primaryLight,
+                              child: Icon(Icons.person, color: Colors.white),
+                            ),
+                            title: Text(
+                              user['username'].toString().toUpperCase(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            trailing: const Icon(
+                              Icons.person_add_rounded,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          Divider(
+                            color: borderColor.withOpacity(0.3),
+                            height: 1,
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ],
+          ],
+
           const SizedBox(height: 16),
           if (_invitedMembers.isNotEmpty) ...[
             const Divider(thickness: 2),
-            const SizedBox(height: 8),
-            ..._invitedMembers.map(
-              (member) => Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isDarkMode
-                      ? Colors.white10
-                      : Colors.black.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 120),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
                   children: [
-                    CircleAvatar(
-                      backgroundColor: AppColors.primary,
-                      radius: 14,
-                      child: Text(
-                        member['username'][0],
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                    for (int i = 0; i < _invitedMembers.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isDarkMode
+                              ? AppColors.surfaceDark
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: borderColor, width: 2),
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: AppColors.primaryLight,
+                              radius: 20,
+                              child: Text(
+                                (_invitedMembers[i]['username'] as String)[0]
+                                    .toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Text(
+                                (_invitedMembers[i]['username'] as String)
+                                    .toUpperCase(),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                  color: isDarkMode
+                                      ? AppColors.textDarkPrimary
+                                      : AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.person_remove_rounded,
+                                color: AppColors.error,
+                                size: 24,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _invitedMembers.removeAt(i);
+                                });
+                              },
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        member['username'],
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded, size: 20),
-                      onPressed: () {
-                        setState(() {
-                          _invitedMembers.remove(member);
-                        });
-                      },
-                    ),
+                    ],
                   ],
                 ),
               ),
             ),
           ] else
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
+              padding: EdgeInsets.symmetric(vertical: 12),
               child: Opacity(
                 opacity: 0.5,
                 child: Text(
@@ -980,7 +1214,12 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
           ),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: (title.isEmpty && description.isEmpty) ? 24 : 32,
+            bottom: 12,
+          ),
           decoration: BoxDecoration(
             color: cardBg,
             borderRadius: BorderRadius.circular(24),
@@ -989,29 +1228,33 @@ class _CreateAlarmScreenState extends State<CreateAlarmScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  color: titleColor,
-                  height: 1.1,
-                  letterSpacing: -1,
+              if (title.isNotEmpty) ...[
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    color: titleColor,
+                    height: 1.1,
+                    letterSpacing: -1,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                description,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: subTitleColor,
-                  height: 1.4,
+                const SizedBox(height: 16),
+              ],
+              if (description.isNotEmpty) ...[
+                Text(
+                  description,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: subTitleColor,
+                    height: 1.4,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 32),
+                const SizedBox(height: 24),
+              ],
               child,
             ],
           ),

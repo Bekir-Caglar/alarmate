@@ -474,107 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         isDarkMode,
                                       ),
                                       const SizedBox(height: 16),
-                                      ..._alarms.map(
-                                        (alarm) => Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 16.0,
-                                          ),
-                                          child: _buildAlarmCard(
-                                            context: context,
-                                            alarmId: alarm['id'],
-                                            time: alarm['time'] ?? '00:00',
-                                            ampm: alarm['ampm'] ?? 'AM',
-                                            groupName:
-                                                alarm['groupName'] ??
-                                                'BİR GRUP',
-                                            membersAwake:
-                                                (alarm['membersAwake'] as List?)
-                                                    ?.length ??
-                                                0,
-                                            totalMembers:
-                                                (alarm['members'] as Map?)
-                                                    ?.length ??
-                                                1,
-                                            color: alarm['color'] != null
-                                                ? Color(
-                                                    int.parse(alarm['color']),
-                                                  )
-                                                : AppColors.primaryLight,
-                                            isAdmin:
-                                                alarm['creatorId'] ==
-                                                FirebaseAuth
-                                                    .instance
-                                                    .currentUser
-                                                    ?.uid,
-                                            isActive: alarm['isActive'] ?? true,
-                                            isDarkMode: isDarkMode,
-                                            isAnonymous: _isAnonymous,
-                                            days: List<int>.from(
-                                              alarm['days'] ?? [],
-                                            ),
-                                            onToggle: () async {
-                                              final bool newActive =
-                                                  !(alarm['isActive'] ?? true);
-
-                                              await LocalAlarmService.updateAlarm(
-                                                alarm['id'],
-                                                {'isActive': newActive},
-                                              );
-                                              // Update UI locally first for instant feedback
-                                              setState(() {
-                                                final index = _alarms
-                                                    .indexWhere(
-                                                      (a) =>
-                                                          a['id'] ==
-                                                          alarm['id'],
-                                                    );
-                                                if (index != -1) {
-                                                  _alarms[index]['isActive'] =
-                                                      newActive;
-                                                }
-                                              });
-
-                                              // Update local cache immediately for offline reliability
-                                              final current = await LocalDb
-                                                  .instance
-                                                  .getById(
-                                                    'alarms',
-                                                    alarm['id'],
-                                                  );
-                                              if (current != null) {
-                                                await LocalDb.instance.save(
-                                                  'alarms',
-                                                  alarm['id'],
-                                                  {
-                                                    ...current,
-                                                    'isActive': newActive,
-                                                  },
-                                                );
-                                              }
-
-                                              // Report individual status to Firebase for others to see in team status
-                                              final user = FirebaseAuth
-                                                  .instance
-                                                  .currentUser;
-                                              if (user != null &&
-                                                  !user.isAnonymous) {
-                                                await FirebaseDatabase.instance
-                                                    .ref()
-                                                    .child('alarms')
-                                                    .child(alarm['id'])
-                                                    .child(
-                                                      'memberActiveStatuses',
-                                                    )
-                                                    .child(user.uid)
-                                                    .set(newActive);
-                                              }
-
-                                              // Sync with hardware alarm package
-                                              await AlarmSyncService.syncAlarmsWithDevice();
-                                            },
-                                          ),
-                                        ),
-                                      ),
+                                      _buildAlarmsList(isDarkMode),
                                     ],
                                   ],
                                 )
@@ -1328,6 +1228,96 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildAlarmsList(bool isDarkMode) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isTablet = constraints.maxWidth > 600;
+        final List<Widget> alarmWidgets = _alarms.map((alarm) {
+          Widget card = _buildAlarmCard(
+            context: context,
+            alarmId: alarm['id'],
+            time: alarm['time'] ?? '00:00',
+            ampm: alarm['ampm'] ?? 'AM',
+            groupName: alarm['groupName'] ?? 'BİR GRUP',
+            membersAwake: (alarm['membersAwake'] as List?)?.length ?? 0,
+            totalMembers: (alarm['members'] as Map?)?.length ?? 1,
+            color: alarm['color'] != null
+                ? Color(int.parse(alarm['color']))
+                : AppColors.primaryLight,
+            isAdmin:
+                alarm['creatorId'] == FirebaseAuth.instance.currentUser?.uid,
+            isActive: alarm['isActive'] ?? true,
+            isDarkMode: isDarkMode,
+            isAnonymous: _isAnonymous,
+            days: List<int>.from(alarm['days'] ?? []),
+            onToggle: () async {
+              final bool newActive = !(alarm['isActive'] ?? true);
+
+              await LocalAlarmService.updateAlarm(alarm['id'], {
+                'isActive': newActive,
+              });
+              // Update UI locally first for instant feedback
+              setState(() {
+                final index = _alarms.indexWhere((a) => a['id'] == alarm['id']);
+                if (index != -1) {
+                  _alarms[index]['isActive'] = newActive;
+                }
+              });
+
+              // Update local cache immediately for offline reliability
+              final current = await LocalDb.instance.getById(
+                'alarms',
+                alarm['id'],
+              );
+              if (current != null) {
+                await LocalDb.instance.save('alarms', alarm['id'], {
+                  ...current,
+                  'isActive': newActive,
+                });
+              }
+
+              // Report individual status to Firebase for others to see in team status
+              final user = FirebaseAuth.instance.currentUser;
+              if (user != null && !user.isAnonymous) {
+                await FirebaseDatabase.instance
+                    .ref()
+                    .child('alarms')
+                    .child(alarm['id'])
+                    .child('memberActiveStatuses')
+                    .child(user.uid)
+                    .set(newActive);
+              }
+
+              // Sync with hardware alarm package
+              await AlarmSyncService.syncAlarmsWithDevice();
+            },
+          );
+
+          if (isTablet) {
+            return SizedBox(
+              width: (constraints.maxWidth - 16) / 2,
+              child: card,
+            );
+          } else {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: card,
+            );
+          }
+        }).toList();
+
+        if (isTablet) {
+          return Wrap(spacing: 16.0, runSpacing: 16.0, children: alarmWidgets);
+        } else {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: alarmWidgets,
+          );
+        }
+      },
+    );
+  }
+
   Widget _buildAlarmCard({
     required BuildContext context,
     required String alarmId,
@@ -1569,8 +1559,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   )
                 else
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    spacing: 6.0,
+                    runSpacing: 6.0,
                     children: List.generate(7, (index) {
                       final dayNamesArr = [
                         'Pt',
